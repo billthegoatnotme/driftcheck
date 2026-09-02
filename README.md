@@ -133,6 +133,23 @@ Every run appends a line to `<repo>/.driftcheck/docs-history.jsonl`.
   directly and does not honor `.gitignore` — it skips common build/
   dependency directories by name instead.
 
+## Support
+
+If driftcheck saves you time, sending something this way is appreciated
+but never required:
+
+| Network | Address |
+|---|---|
+| Solana | `2iPLEu3duHcaieLPaoVfrrk6UPurmdeT4qobtiFNd2SZ` |
+| Bitcoin (Taproot) | `bc1p6puaec5q4gvl7fd64aefrekq4fdkh9a0rtxugdd2q4exrqswkggqzaxf42` |
+| Ethereum | `0x1155F41781b0edc9F26a28438E841B3e64c31509` |
+| HyperEVM | `0x1155F41781b0edc9F26a28438E841B3e64c31509` (same address — EVM-compatible) |
+| Robinhood Chain | `0x1155F41781b0edc9F26a28438E841B3e64c31509` (same address — EVM-compatible) |
+
+Double-check the network before sending. The Bitcoin address above is a
+Taproot (`bc1p...`) address — some older wallets/exchanges can't send
+to it.
+
 ## Author
 
 Built by [The Artchitect](https://github.com/billthegoatnotme).
