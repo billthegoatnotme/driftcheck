@@ -22,6 +22,9 @@
     "documentation",
     "verification"
   ],
-  "author": "TODO: your name/handle here",
+  "author": {
+    "name": "The Artchitect",
+    "url": "https://github.com/billthegoatnotme"
+  },
   "license": "MIT"
 }

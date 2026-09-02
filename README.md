@@ -133,6 +133,10 @@ Every run appends a line to `<repo>/.driftcheck/docs-history.jsonl`.
   directly and does not honor `.gitignore` — it skips common build/
   dependency directories by name instead.
 
+## Author
+
+Built by [The Artchitect](https://github.com/billthegoatnotme).
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
