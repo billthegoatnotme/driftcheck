@@ -1,0 +1,7 @@
+node_modules/
+.driftcheck/
+
+# Internal planning docs — Atlas-specific/private narrative, not meant
+# for this repo's public history. Kept locally, not tracked.
+driftcheck_spec_v0_1.md
+driftcheck_thread_handoff.md

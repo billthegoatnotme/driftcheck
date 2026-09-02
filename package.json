@@ -1,0 +1,27 @@
+{
+  "name": "driftcheck",
+  "version": "0.1.0",
+  "description": "A truth instrument for two kinds of drift: repo state that's moved since you last checked, and reference docs that no longer describe the code they name.",
+  "type": "module",
+  "bin": {
+    "driftcheck": "./bin/driftcheck.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "cli",
+    "drift",
+    "git",
+    "documentation",
+    "verification"
+  ],
+  "author": "TODO: your name/handle here",
+  "license": "MIT"
+}
