@@ -88,6 +88,32 @@ export function runRepoCheck(args) {
           .filter((b) => b && b !== 'main');
         if (merged.length) say(`         ⚠️  stale local branches (merged on origin): ${merged.join(', ')}`);
 
+        // Local branches with real commits NOT in origin/main, whose own
+        // PR already shows MERGED or CLOSED — invisible to both the sync
+        // check above (only looks at the current branch) and the PRS
+        // check below (only lists OPEN PRs): work that looks resolved
+        // because its PR is closed, but was actually pushed after the
+        // merge happened and never made it in.
+        const allBranches = sh(repo, 'git branch --format="%(refname:short)"')
+          .out.split('\n').map((b) => b.trim()).filter(Boolean);
+        const unmerged = allBranches.filter((b) => b !== branch && b !== 'main' && !merged.includes(b));
+        if (unmerged.length) {
+          const prCheck = sh(repo, 'gh pr list --state all --limit 100 --json number,state,headRefName', { timeout: 30_000 });
+          if (!prCheck.ok) {
+            say('         ??  gh unavailable — could not check whether unmerged local branches have closed PRs behind them');
+          } else {
+            try {
+              const prs = JSON.parse(prCheck.out || '[]');
+              for (const b of unmerged) {
+                const pr = prs.find((p) => p.headRefName === b && p.state !== 'OPEN');
+                if (!pr) continue;
+                const ahead = sh(repo, `git rev-list --count origin/main..${b}`).out.trim();
+                say(`         ⚠️  branch '${b}' has ${ahead} commit(s) not in origin/main, but PR #${pr.number} is already ${pr.state} — likely pushed after merge, not included`);
+              }
+            } catch { say('         ??  could not parse gh output for unmerged-branch check'); }
+          }
+        }
+
         // Agent worktrees (e.g. Claude Code's .claude/worktrees) left behind
         // can silently pollute test globs or file listings if not excluded.
         const wtDir = join(repo, '.claude', 'worktrees');
