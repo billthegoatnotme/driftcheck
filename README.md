@@ -147,6 +147,16 @@ tool exists to avoid elsewhere. Fill those in yourself, or have your AI
 collaborator do it before closing out — the same way this project's
 own spec and handoff docs were actually written.
 
+The thread handoff is the actual continuity mechanism this subcommand
+exists to automate: a short document meant to be pasted at the start of
+the *next* working session so it doesn't start cold. It points back at
+the spec's latest Checkpoint Log entry rather than repeating it, and
+carries only what a fresh session actually needs — what to do next, and
+any open questions left deliberately unresolved rather than
+re-litigated. `driftcheck_spec_v0_01.md` in this repo's own root is a
+live example, not a fixture — this project uses `driftcheck spec` on
+itself.
+
 `<repo>` in the generated filenames is the target's own name (from
 `package.json`'s `name` field, falling back to the directory name), not
 a literal string.
