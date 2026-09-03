@@ -151,16 +151,29 @@ own spec and handoff docs were actually written.
 `package.json`'s `name` field, falling back to the directory name), not
 a literal string.
 
+`close` patches the existing spec in place rather than regenerating it
+from the template — only the "Detected" scan snapshot gets refreshed
+and a new Checkpoint Log entry gets prepended; everything else,
+including any hand-edits to the governance sections or "Purpose,"
+carries forward untouched. (An earlier version of this feature
+regenerated the whole document from the template on every close, which
+silently destroyed any real customization — filling in the Pipeline
+Architecture table, writing real Purpose content — the moment the next
+checkpoint ran. That's a real data-loss risk for anyone actually using
+this file, not a cosmetic one, so it was corrected rather than left as
+a documented limitation.) If a spec file has been edited enough that
+`close` can't find one of the section markers it patches against, it
+still checkpoints — it just reports which marker it couldn't find
+instead of silently skipping the update.
+
 Each `close` also archives whatever it just superseded — every older
 `<repo>_spec_v0_NN.md` moves into `<repo>_spec_previous/`, and every
 older handoff into `<repo>_thread_handoff_previous/`, so the repo root
 always shows exactly one current spec and one current handoff no matter
-how many checkpoints have happened. Nothing is ever deleted, only moved
-— older versions still hold their own point-in-time "Detected" snapshot
-and whatever was hand-written into "Purpose" at the time, neither of
-which the Checkpoint Log's carried-forward entries capture. The output
-line reports what got archived, since moving files silently would cut
-against driftcheck's own verdict-first stance everywhere else.
+how many checkpoints have happened. Nothing is ever deleted, only
+moved. The output line reports what got archived, since moving files
+silently would cut against driftcheck's own verdict-first stance
+everywhere else.
 
 ## `driftcheck vitest`
 
@@ -212,6 +225,11 @@ to fill in with real assertions, not something to leave as-is.
   ORMs skip cleanly rather than being checked.
 - `driftcheck repo`'s flake-vs-real test triage is Vitest-specific;
   other runners get pass/fail only.
+- `driftcheck repo`/`driftcheck vitest` operate on one target directory
+  — they don't auto-discover a monorepo's separate `package.json`
+  files. Point them at each package individually (e.g.
+  `driftcheck repo client --tests`, `driftcheck repo server --tests`
+  for a client/server split with no root-level `package.json`).
 - `driftcheck docs`'s reference matching supports the arrow-pair and
   bare-path conventions described above and nothing else out of the
   box. Extending it to other conventions means editing the two regexes
@@ -224,11 +242,10 @@ to fill in with real assertions, not something to leave as-is.
   not something inferable from repo state. Edit the wording for all
   future specs by editing `templates/drift_check_manifesto.md` directly; it's read
   fresh on every run, not baked into the code.
-- `driftcheck spec close` only carries the Checkpoint Log forward
-  automatically; every other section (including "Purpose") regenerates
-  fresh each version rather than merging in prior hand-edits. Older
-  spec files stay on disk unchanged, so nothing is lost — it's just not
-  copied forward for you.
+- `driftcheck spec close` only patches the "Detected" section and the
+  Checkpoint Log — if you restructure a spec file heavily enough that
+  those markers can't be found, it reports that plainly rather than
+  silently failing to update, but it also won't guess where to patch.
 - `driftcheck vitest`'s export detection uses the same precise, narrow
   patterns `driftcheck docs` uses for declarations — `export function`/
   `class`/`const`/`let NAME`. `export { a, b }` lists and re-exports
