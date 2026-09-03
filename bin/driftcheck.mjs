@@ -13,6 +13,7 @@ Usage:
   driftcheck docs [path] [--file <path>]...    verify a doc's file/function references against the code
   driftcheck spec [path]                       scaffold a repo spec on first use (no-op if one exists)
   driftcheck spec close [path]                 checkpoint the spec forward + write a thread handoff
+  driftcheck vitest [path] [--file <path>]...  scaffold Vitest config/script + stub test files
 
   driftcheck --help                            show this message
   driftcheck --version                         print the version
@@ -39,6 +40,9 @@ if (sub === 'repo') {
 } else if (sub === 'spec') {
   const { runSpecCommand } = await import('../src/spec.mjs');
   console.log(runSpecCommand(rest));
+} else if (sub === 'vitest') {
+  const { runVitestScaffold } = await import('../src/vitest.mjs');
+  console.log(runVitestScaffold(rest));
 } else {
   console.error(`driftcheck: unknown subcommand "${sub}"\n`);
   console.log(USAGE);
