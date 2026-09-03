@@ -39,6 +39,52 @@ test('moved function is traced to its new file', () => {
   } finally { cleanup(dir); }
 });
 
+test('the "moved/renamed?" search does not look inside a gitignored directory', () => {
+  const dir = makeTempDir();
+  try {
+    mkdirSync(join(dir, 'src'), { recursive: true });
+    mkdirSync(join(dir, 'generated'), { recursive: true });
+    writeFileSync(join(dir, '.gitignore'), 'generated/\nnode_modules\n*.log\n');
+    writeFileSync(join(dir, 'src', 'a.js'), '// nothing here\n');
+    writeFileSync(join(dir, 'generated', 'stale.js'), 'function helper() { return 1; }\n');
+    writeFileSync(join(dir, 'CLAUDE.md'), '`src/a.js -> helper()`\n');
+    const out = runDocsCheck([dir]);
+    assert.match(out, /not declared anywhere in the repo/);
+    assert.doesNotMatch(out, /found in generated/);
+  } finally { cleanup(dir); }
+});
+
+test('the "moved/renamed?" search still finds a match outside a gitignored directory', () => {
+  const dir = makeTempDir();
+  try {
+    mkdirSync(join(dir, 'src'), { recursive: true });
+    mkdirSync(join(dir, 'generated'), { recursive: true });
+    writeFileSync(join(dir, '.gitignore'), 'generated/\n');
+    writeFileSync(join(dir, 'src', 'a.js'), '// nothing here\n');
+    writeFileSync(join(dir, 'src', 'b.js'), 'function helper() { return 1; }\n');
+    writeFileSync(join(dir, 'CLAUDE.md'), '`src/a.js -> helper()`\n');
+    const out = runDocsCheck([dir]);
+    assert.match(out, /found in src\/b\.js instead/);
+  } finally { cleanup(dir); }
+});
+
+test('gitignore parsing ignores wildcard and nested-path lines rather than guessing', () => {
+  const dir = makeTempDir();
+  try {
+    mkdirSync(join(dir, 'weird-but-not-skipped'), { recursive: true });
+    // "*.log" is a wildcard (skipped entirely, not treated as a dir
+    // named "*.log"); "packages/dist" is nested (out of scope) - a
+    // directory that happens to share a name with neither should still
+    // be walked normally.
+    writeFileSync(join(dir, '.gitignore'), '*.log\npackages/dist\n');
+    writeFileSync(join(dir, 'weird-but-not-skipped', 'x.js'), 'function helper() { return 1; }\n');
+    writeFileSync(join(dir, 'a.js'), '// nothing here\n');
+    writeFileSync(join(dir, 'CLAUDE.md'), '`a.js -> helper()`\n');
+    const out = runDocsCheck([dir]);
+    assert.match(out, /found in weird-but-not-skipped\/x\.js instead/);
+  } finally { cleanup(dir); }
+});
+
 test('missing bare path is flagged', () => {
   const dir = makeTempDir();
   try {
