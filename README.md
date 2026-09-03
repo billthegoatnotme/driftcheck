@@ -219,9 +219,11 @@ than overwriting it.
 
 `--file <path>` (repeatable) additionally scaffolds `<file>.test.<ext>`
 next to that source file — one `describe`/`test()` stub per exported
-`function`/`class`/`const`/`let` found via the same precise,
-un-guessed pattern matching `driftcheck docs` already uses (`export`
-lists and re-exports aren't extracted, for the same reason). Never
+`function`/`class`/`const`/`let`, plus plain `export { a, b }` lists,
+found via the same precise, un-guessed patterns `driftcheck docs`
+already uses. Aliases (`export { a as b }`) and re-exports
+(`export { x } from './y'`, naming something from a different file)
+are still left alone — genuinely ambiguous, not just unhandled. Never
 overwrites an existing test file.
 
 **It does not write real assertions, on purpose.** Every stub throws
@@ -263,9 +265,11 @@ to fill in with real assertions, not something to leave as-is.
   bare-path conventions described above and nothing else out of the
   box. Extending it to other conventions means editing the two regexes
   in `src/docs.mjs` for now.
-- The "moved/renamed?" search in `driftcheck docs` walks the repo tree
-  directly and does not honor `.gitignore` — it skips common build/
-  dependency directories by name instead.
+- The "moved/renamed?" search in `driftcheck docs` reads the repo's own
+  `.gitignore` for simple top-level directory names to skip, on top of
+  a hardcoded list of common ones — not a full gitignore parser.
+  Wildcards, negations, and nested paths (anything with a `/` other
+  than one trailing slash) aren't handled, and are walked as normal.
 - `driftcheck spec`'s Pipeline Architecture table ships as a fill-in
   placeholder, not auto-detected roles — it's a governance template,
   not something inferable from repo state. Edit the wording for all
@@ -275,11 +279,11 @@ to fill in with real assertions, not something to leave as-is.
   Checkpoint Log — if you restructure a spec file heavily enough that
   those markers can't be found, it reports that plainly rather than
   silently failing to update, but it also won't guess where to patch.
-- `driftcheck vitest`'s export detection uses the same precise, narrow
-  patterns `driftcheck docs` uses for declarations — `export function`/
-  `class`/`const`/`let NAME`. `export { a, b }` lists and re-exports
-  aren't extracted; a source file that only uses those reports nothing
-  to stub rather than guessing.
+- `driftcheck vitest`'s export detection covers `export function`/
+  `class`/`const`/`let NAME` and plain `export { a, b }` lists. Aliased
+  entries (`export { a as b }`) and re-exports (`export { x } from
+  './y'`) still aren't extracted — genuinely ambiguous which name a
+  stub should import under, not just unhandled.
 - `driftcheck vitest --file` scaffolds one file at a time, on purpose —
   it never scans and stubs an entire repo unprompted.
 

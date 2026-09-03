@@ -50,12 +50,33 @@ function ensureTestScript(repo) {
   return { changed: true, note: 'added "test": "vitest run" to package.json (run `npm install -D vitest` if it isn\'t a dependency yet)' };
 }
 
-// Only the same precise, un-guessed shapes docs.mjs already trusts:
+// The same precise, un-guessed shapes docs.mjs already trusts:
 // `export function/class NAME`, `export default function/class NAME`,
-// `export const/let NAME`. Anything else (export lists, re-exports) is
-// real content but too ambiguous to extract without guessing, so it's
-// left alone rather than mishandled.
+// `export const/let NAME`.
 const EXPORT_RE = /^export\s+(?:default\s+)?(?:async\s+)?(?:function|class)\s+([A-Za-z_$][\w$]*)|^export\s+(?:const|let)\s+([A-Za-z_$][\w$]*)/gm;
+
+// Plain `export { a, b, c };` lists — common in barrel/index files, and
+// unambiguous enough to extract without guessing. Deliberately skips
+// `as` aliases (ambiguous which name a stub should import under),
+// bare `default` entries, and re-exports (`export { x } from './y'`
+// names something from a DIFFERENT file, not this one).
+const EXPORT_LIST_RE = /export\s*\{([\s\S]*?)\}\s*(from\b)?/g;
+
+function findExportListNames(content) {
+  const names = new Set();
+  let m;
+  while ((m = EXPORT_LIST_RE.exec(content))) {
+    if (m[2]) continue; // re-export
+    for (const raw of m[1].split(',')) {
+      const name = raw.trim();
+      if (name && name !== 'default' && !name.includes(' as ') && /^[A-Za-z_$][\w$]*$/.test(name)) {
+        names.add(name);
+      }
+    }
+  }
+  EXPORT_LIST_RE.lastIndex = 0;
+  return names;
+}
 
 function findExports(sourcePath) {
   const content = readFileSync(sourcePath, 'utf8');
@@ -63,6 +84,7 @@ function findExports(sourcePath) {
   let m;
   while ((m = EXPORT_RE.exec(content))) names.add(m[1] ?? m[2]);
   EXPORT_RE.lastIndex = 0; // regex has /g — reset so a second call on the same source doesn't start mid-string
+  for (const name of findExportListNames(content)) names.add(name);
   return [...names];
 }
 
