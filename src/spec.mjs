@@ -61,6 +61,24 @@ function findVersioned(repo, name, label) {
     .map(({ file, m }) => ({ file, version: Number(m[1]) }));
 }
 
+// Matches ANY <somename>_spec_v0_NN.md in root, regardless of the
+// currently detected repo name — not scoped like findVersioned above.
+// Used to catch a real failure mode: repoName() reads package.json's
+// "name" field, so if that field changes (or the file disappears
+// entirely) between runs, the detected name changes too, and a new
+// `spec close` would otherwise silently start a second, orphaned
+// version sequence under the new name instead of continuing the first.
+const ANY_SPEC_RE = /^(.+)_spec_v0_\d+\.md$/;
+
+function otherNamedSpecs(repo, currentName) {
+  const others = new Set();
+  for (const f of readdirSync(repo)) {
+    const m = f.match(ANY_SPEC_RE);
+    if (m && m[1] !== currentName) others.add(m[1]);
+  }
+  return [...others];
+}
+
 function latestSpecVersion(repo, name) {
   const versions = findVersioned(repo, name, 'spec').map((v) => v.version);
   return versions.length ? Math.max(...versions) : 0;
@@ -191,16 +209,21 @@ export function runSpecCommand(args) {
   const latest = latestSpecVersion(repo, name);
   const header = '── driftcheck spec ─ ' + repo;
 
+  const driftNames = otherNamedSpecs(repo, name);
+  const driftLine = driftNames.length
+    ? `\n         ??  also found spec file(s) under a different name (${driftNames.join(', ')}) — if the repo's detected name changed (e.g. package.json's "name" field), these are an orphaned earlier sequence, not lost, just not continued`
+    : '';
+
   if (!closeMode) {
     if (latest > 0) {
-      return `${header}\nSPEC     OK  ${name}_spec_v0_${pad2(latest)}.md already exists — nothing to do (${BT}driftcheck spec close${BT} checkpoints forward)`;
+      return `${header}\nSPEC     OK  ${name}_spec_v0_${pad2(latest)}.md already exists — nothing to do (${BT}driftcheck spec close${BT} checkpoints forward)${driftLine}`;
     }
     writeFileSync(specPath(repo, name, 1), buildInitialSpecBody(repo, name));
-    return `${header}\nSPEC     OK  created ${name}_spec_v0_01.md`;
+    return `${header}\nSPEC     OK  created ${name}_spec_v0_01.md${driftLine}`;
   }
 
   if (latest === 0) {
-    return `${header}\nSPEC     ??  no existing ${name}_spec_v0_NN.md found — run ${BT}driftcheck spec${BT} first`;
+    return `${header}\nSPEC     ??  no existing ${name}_spec_v0_NN.md found — run ${BT}driftcheck spec${BT} first${driftLine}`;
   }
   const next = latest + 1;
   const existing = readFileSync(specPath(repo, name, latest), 'utf8');
@@ -217,5 +240,6 @@ export function runSpecCommand(args) {
 
   const lines = [`${header}\nSPEC     OK  checkpointed → ${name}_spec_v0_${pad2(next)}.md + ${name}_thread_handoff_v0_${pad2(next)}.md${archiveNote}`];
   for (const note of notes) lines.push(`         ??  ${note}`);
+  if (driftLine) lines.push(driftLine.trimStart());
   return lines.join('\n');
 }
