@@ -12,7 +12,7 @@
     "url": "https://github.com/billthegoatnotme/driftcheck/issues"
   },
   "bin": {
-    "driftcheck": "./bin/driftcheck.mjs"
+    "driftcheck": "bin/driftcheck.mjs"
   },
   "scripts": {
     "test": "node --test"
