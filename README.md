@@ -31,10 +31,15 @@ letting a stale assumption stand unchallenged.
 
 ## Install
 
-Not yet published to npm. Until then, clone and link it locally:
+```bash
+npm install -g @billthegoatnotme/driftcheck
+driftcheck --help
+```
+
+Or clone and link it locally instead:
 
 ```bash
-git clone <this-repo>
+git clone https://github.com/billthegoatnotme/driftcheck.git
 cd driftcheck
 npm link
 driftcheck --help
