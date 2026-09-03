@@ -59,10 +59,15 @@ driftcheck repo /path/to/other/repo --tests --build
   test or build globs.
 - **PRS** — open pull requests via the `gh` CLI. If a PR you believed
   was merged still shows up here, it isn't merged yet.
-- **DB** — Prisma migration drift, via `prisma migrate status` loaded
-  through `.env.local`. Skipped cleanly (verdict `—`) on any repo
-  without `prisma/schema.prisma`; skipped as inconclusive (`??`) if
-  Prisma is present but `.env.local` isn't.
+- **DB** — checks a `"driftcheck:db"` script in the target's
+  `package.json` if one exists, so any ORM can plug in: exit `0` means
+  no drift, nonzero means it found some. No output parsing happens;
+  that convention is the whole interface, and it takes priority over
+  the Prisma fallback below if both are present. Without that script,
+  falls back to Prisma migration drift via `prisma migrate status`
+  loaded through `.env.local`: skipped cleanly (verdict `—`) on any
+  repo without `prisma/schema.prisma`; skipped as inconclusive (`??`)
+  if Prisma is present but `.env.local` isn't.
 - **TESTS** (`--tests`) — runs the `test` script from the target repo's
   own `package.json`. When that script uses Vitest, failures are
   re-run in isolation and classified: fails again in isolation = REAL;
@@ -241,8 +246,10 @@ to fill in with real assertions, not something to leave as-is.
 
 ## Limitations
 
-- `driftcheck repo`'s DB check currently understands Prisma only; other
-  ORMs skip cleanly rather than being checked.
+- `driftcheck repo`'s DB check has no built-in ORM-specific knowledge
+  beyond the Prisma fallback; every other ORM needs a `"driftcheck:db"`
+  script wired up in `package.json`, reporting only pass/fail, not
+  migration-level detail the way the Prisma path does.
 - `driftcheck repo`'s flake-vs-real test triage is Vitest-specific;
   other runners get pass/fail only.
 - `driftcheck repo`/`driftcheck vitest` operate on one target directory

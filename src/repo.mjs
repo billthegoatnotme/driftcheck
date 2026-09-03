@@ -115,27 +115,47 @@ export function runRepoCheck(args) {
     }
   }
 
-  // ── 3. MIGRATIONS (Prisma local dev DB drift) ─────────────────────
+  // ── 3. MIGRATIONS (configurable, falls back to Prisma auto-detect) ─
   {
-    const schemaPath = join(repo, 'prisma', 'schema.prisma');
-    if (!existsSync(schemaPath)) {
-      say('DB       —   no prisma/schema.prisma — skipping (this check is Prisma-specific)');
+    const pkgPath = join(repo, 'package.json');
+    let customDbCmd = null;
+    if (existsSync(pkgPath)) {
+      try { customDbCmd = JSON.parse(readFileSync(pkgPath, 'utf8')).scripts?.['driftcheck:db'] ?? null; } catch { /* malformed package.json */ }
+    }
+
+    if (customDbCmd) {
+      // No ORM-specific parsing here on purpose — a project's own
+      // "driftcheck:db" script can wrap Drizzle, TypeORM, Sequelize,
+      // Knex, or anything else; exit 0 means no drift, by convention.
+      const r = sh(repo, 'npm run driftcheck:db', { timeout: 90_000 });
+      // Skip npm's own "> driftcheck:db" / "> <command>" echo lines to
+      // find the first line the script itself actually produced.
+      const firstRealLine = r.out.split('\n').find((l) => l.trim() && !l.trim().startsWith('>')) ?? '';
+      say(r.ok
+        ? `DB       OK  \`${customDbCmd}\` reports no drift`
+        : `DB       ⚠️  \`${customDbCmd}\` reported drift (nonzero exit) — first line: ${firstRealLine}`);
+      record.db = { custom: true, ok: r.ok };
     } else {
-      const envFile = join(repo, '.env.local');
-      if (!existsSync(envFile)) {
-        say('DB       ??  Prisma project but no .env.local — skipping migrate status');
+      const schemaPath = join(repo, 'prisma', 'schema.prisma');
+      if (!existsSync(schemaPath)) {
+        say('DB       —   no prisma/schema.prisma and no "driftcheck:db" script — skipping');
       } else {
-        const r = sh(repo, 'node --env-file=.env.local node_modules/prisma/build/index.js migrate status', { timeout: 90_000 });
-        const pending = r.out.match(/following migrations? have not yet been applied[\s\S]*?((?:\d{14}\S*\s*)+)/);
-        if (r.out.includes('Database schema is up to date')) {
-          say('DB       OK  local dev DB matches committed migrations');
-          record.dbPending = 0;
-        } else if (pending) {
-          const names = pending[1].trim().split(/\s+/);
-          say(`DB       ⚠️  ${names.length} unapplied migration(s): ${names.join(', ')}`);
-          record.dbPending = names.length;
+        const envFile = join(repo, '.env.local');
+        if (!existsSync(envFile)) {
+          say('DB       ??  Prisma project but no .env.local — skipping migrate status');
         } else {
-          say(`DB       ??  migrate status inconclusive (${r.ok ? 'exit 0' : 'nonzero exit'}) — first line: ${r.out.split('\n').find((l) => l.trim()) ?? ''}`);
+          const r = sh(repo, 'node --env-file=.env.local node_modules/prisma/build/index.js migrate status', { timeout: 90_000 });
+          const pending = r.out.match(/following migrations? have not yet been applied[\s\S]*?((?:\d{14}\S*\s*)+)/);
+          if (r.out.includes('Database schema is up to date')) {
+            say('DB       OK  local dev DB matches committed migrations');
+            record.dbPending = 0;
+          } else if (pending) {
+            const names = pending[1].trim().split(/\s+/);
+            say(`DB       ⚠️  ${names.length} unapplied migration(s): ${names.join(', ')}`);
+            record.dbPending = names.length;
+          } else {
+            say(`DB       ??  migrate status inconclusive (${r.ok ? 'exit 0' : 'nonzero exit'}) — first line: ${r.out.split('\n').find((l) => l.trim()) ?? ''}`);
+          }
         }
       }
     }
