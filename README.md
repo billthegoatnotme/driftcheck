@@ -69,9 +69,12 @@ driftcheck repo /path/to/other/repo --tests --build
   was merged still shows up here, it isn't merged yet.
 - **DB** — checks a `"driftcheck:db"` script in the target's
   `package.json` if one exists, so any ORM can plug in: exit `0` means
-  no drift, nonzero means it found some. No output parsing happens;
-  that convention is the whole interface, and it takes priority over
-  the Prisma fallback below if both are present. Without that script,
+  no drift, exit `1` means it found some, anything else (unreachable
+  DB, missing command, a script bug, a timeout) is reported
+  inconclusive (`??`) rather than assumed to be drift. No output
+  parsing happens beyond the exit code; that convention is the whole
+  interface, and it takes priority over the Prisma fallback below if
+  both are present. Without that script,
   falls back to Prisma migration drift via `prisma migrate status`
   loaded through `.env.local`: skipped cleanly (verdict `—`) on any
   repo without `prisma/schema.prisma`; skipped as inconclusive (`??`)
@@ -266,7 +269,8 @@ to fill in with real assertions, not something to leave as-is.
 
 - `driftcheck repo`'s DB check has no built-in ORM-specific knowledge
   beyond the Prisma fallback; every other ORM needs a `"driftcheck:db"`
-  script wired up in `package.json`. It surfaces up to 3 lines of the
+  script wired up in `package.json`, using the exit-code convention
+  above (`0`/`1`/anything else). It surfaces up to 3 lines of the
   script's own output on drift, but still can't parse migration-level
   detail out of arbitrary formats the way the Prisma path does — that
   detail is only as good as what the script itself prints.
