@@ -11,6 +11,8 @@ const USAGE = `driftcheck v${pkg.version} — catches a claim that was true once
 Usage:
   driftcheck repo [path] [--tests] [--build]   verify repo/PR/DB/test state against reality
   driftcheck docs [path] [--file <path>]...    verify a doc's file/function references against the code
+  driftcheck spec [path]                       scaffold a repo spec on first use (no-op if one exists)
+  driftcheck spec close [path]                 checkpoint the spec forward + write a thread handoff
 
   driftcheck --help                            show this message
   driftcheck --version                         print the version
@@ -30,10 +32,13 @@ if (sub === '--version' || sub === '-v') {
 
 if (sub === 'repo') {
   const { runRepoCheck } = await import('../src/repo.mjs');
-  runRepoCheck(rest);
+  console.log(runRepoCheck(rest));
 } else if (sub === 'docs') {
   const { runDocsCheck } = await import('../src/docs.mjs');
-  runDocsCheck(rest);
+  console.log(runDocsCheck(rest));
+} else if (sub === 'spec') {
+  const { runSpecCommand } = await import('../src/spec.mjs');
+  console.log(runSpecCommand(rest));
 } else {
   console.error(`driftcheck: unknown subcommand "${sub}"\n`);
   console.log(USAGE);
