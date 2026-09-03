@@ -3,6 +3,14 @@
   "version": "1.0.0",
   "description": "A truth instrument for three kinds of drift: repo state, reference docs, and thread-to-thread continuity.",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/billthegoatnotme/driftcheck.git"
+  },
+  "homepage": "https://github.com/billthegoatnotme/driftcheck#readme",
+  "bugs": {
+    "url": "https://github.com/billthegoatnotme/driftcheck/issues"
+  },
   "bin": {
     "driftcheck": "./bin/driftcheck.mjs"
   },
