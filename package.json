@@ -1,7 +1,7 @@
 {
   "name": "driftcheck",
   "version": "0.1.0",
-  "description": "A truth instrument for two kinds of drift: repo state that's moved since you last checked, and reference docs that no longer describe the code they name.",
+  "description": "A truth instrument for three kinds of drift: repo state, reference docs, and thread-to-thread continuity.",
   "type": "module",
   "bin": {
     "driftcheck": "./bin/driftcheck.mjs"
@@ -9,6 +9,7 @@
   "files": [
     "bin",
     "src",
+    "templates",
     "README.md",
     "LICENSE"
   ],
