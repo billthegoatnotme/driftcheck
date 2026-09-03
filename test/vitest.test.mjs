@@ -79,6 +79,27 @@ test('--file scaffolds one stub per exported function/const/class, skips private
   } finally { cleanup(dir); }
 });
 
+test('--file scaffolds stubs for a plain export list, skipping aliases and re-exports', () => {
+  const dir = makeTempDir();
+  try {
+    mkdirSync(join(dir, 'src'), { recursive: true });
+    writeFileSync(join(dir, 'src', 'lib.js'), [
+      'function add(a, b) { return a + b; }',
+      'const PI = 3.14159;',
+      'function aliased() { return 1; }',
+      '',
+      "export { add, PI, aliased as renamedExport, unrelated } from './other.js';",
+      'export { add, PI };',
+      '',
+    ].join('\n'));
+    const out = runVitestScaffold([dir, '--file', 'src/lib.js']);
+    assert.match(out, /STUBS\s+OK\s+src\/lib\.js → lib\.test\.js \(2 stub\(s\): add, PI\)/);
+
+    const stub = readFileSync(join(dir, 'src', 'lib.test.js'), 'utf8');
+    assert.doesNotMatch(stub, /renamedExport|unrelated|aliased/);
+  } finally { cleanup(dir); }
+});
+
 test('--file never overwrites an existing test file', () => {
   const dir = makeTempDir();
   try {
