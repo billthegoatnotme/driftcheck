@@ -21,6 +21,27 @@ import { join, resolve } from 'node:path';
 import { sh } from './lib/shell.mjs';
 import { logHistory } from './lib/history.mjs';
 
+// Matches driftcheck's own generated stubs (.test.js/.mjs) as well as
+// TypeScript projects (.test.ts/.tsx) — not just the .tsx? the original
+// private tool assumed everywhere, back when every consumer was Atlas.
+// Exported for direct unit testing against captured real Vitest output,
+// without needing Vitest itself as a driftcheck devDependency.
+export const VITEST_FAIL_FILE_RE = /FAIL\s+(\S+\.test\.(?:tsx?|jsx?|mjs|cjs))/g;
+
+// Parses Vitest's own "Tests  <summary>" line without assuming which
+// segments are present — "3 passed (3)", "3 failed (3)" (nothing
+// passed at all — the original regex here had no branch for this and
+// silently fell through to "suite did not produce a summary"), and
+// "1 failed | 2 passed (3)" all need to parse correctly.
+export function parseVitestSummary(out) {
+  const line = out.match(/Tests\s+([^\n]+)/);
+  if (!line) return null;
+  const total = line[1].match(/\((\d+)\)/);
+  if (!total) return null;
+  const passed = line[1].match(/(\d+)\s+passed/);
+  return { total: Number(total[1]), passed: passed ? Number(passed[1]) : 0 };
+}
+
 export function runRepoCheck(args) {
   const flags = new Set(args.filter((a) => a.startsWith('--')));
   const repo = resolve(args.find((a) => !a.startsWith('--')) ?? process.cwd());
@@ -134,32 +155,32 @@ export function runRepoCheck(args) {
       const isVitest = /vitest/i.test(testCmd);
       const t0 = Date.now();
       const run = sh(repo, 'npm test', { timeout: 420_000 });
-      const summary = run.out.match(/Tests\s+(?:(\d+) failed \| )?(\d+) passed \((\d+)\)/);
+      const summary = parseVitestSummary(run.out);
       const elapsed = () => Math.round((Date.now() - t0) / 1000);
 
       if (run.ok && summary) {
-        say(`TESTS    OK  ${summary[2]}/${summary[3]} passed (${elapsed()}s)`);
-        record.tests = { passed: Number(summary[2]), total: Number(summary[3]), real: [], flaky: [] };
+        say(`TESTS    OK  ${summary.passed}/${summary.total} passed (${elapsed()}s)`);
+        record.tests = { passed: summary.passed, total: summary.total, real: [], flaky: [] };
       } else if (isVitest) {
         // The flake protocol: failures re-run in isolation via vitest
         // directly (bypassing whatever flags "npm test" adds) so a
         // specific file list can be targeted. Pass there = FLAKY.
         const failedFiles = [...new Set(
-          [...run.out.matchAll(/FAIL\s+(\S+\.test\.tsx?)/g)].map((m) => m[1]),
+          [...run.out.matchAll(VITEST_FAIL_FILE_RE)].map((m) => m[1]),
         )];
         if (failedFiles.length) {
           const iso = sh(repo, `npx vitest run ${failedFiles.join(' ')}`, { timeout: 300_000 });
           const isoFailed = [...new Set(
-            [...iso.out.matchAll(/FAIL\s+(\S+\.test\.tsx?)/g)].map((m) => m[1]),
+            [...iso.out.matchAll(VITEST_FAIL_FILE_RE)].map((m) => m[1]),
           )];
           const flaky = failedFiles.filter((f) => !isoFailed.includes(f));
           if (isoFailed.length === 0) {
-            say(`TESTS    OK* ${summary ? `${summary[2]}/${summary[3]}` : 'suite'} — ${flaky.length} FLAKY file(s) under full-suite load, ALL pass in isolation: ${flaky.join(', ')}. Not a regression; known machine-load class.`);
+            say(`TESTS    OK* ${summary ? `${summary.passed}/${summary.total}` : 'suite'} — ${flaky.length} FLAKY file(s) under full-suite load, ALL pass in isolation: ${flaky.join(', ')}. Not a regression; known machine-load class.`);
           } else {
             say(`TESTS    ❌  REAL failures in: ${isoFailed.join(', ')} (fail even in isolation)` +
                 (flaky.length ? ` | plus flaky: ${flaky.join(', ')}` : ''));
           }
-          record.tests = { passed: summary ? Number(summary[2]) : null, total: summary ? Number(summary[3]) : null, real: isoFailed, flaky };
+          record.tests = { passed: summary?.passed ?? null, total: summary?.total ?? null, real: isoFailed, flaky };
         } else {
           say(`TESTS    ❌  suite did not produce a summary — first error line: ${run.out.split('\n').find((l) => /error/i.test(l)) ?? '(none found)'}`);
         }

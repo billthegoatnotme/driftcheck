@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { runRepoCheck } from '../src/repo.mjs';
+import { runRepoCheck, parseVitestSummary, VITEST_FAIL_FILE_RE } from '../src/repo.mjs';
 import { makeTempDir, cleanup } from './helpers.mjs';
 
 function git(dir, args) {
@@ -57,4 +57,48 @@ test('--tests with no "test" script in package.json skips cleanly', () => {
     const out = runRepoCheck([dir, '--tests']);
     assert.match(out, /TESTS\s+\?\?\s+no "test" script/);
   } finally { cleanup(dir); }
+});
+
+// Regression coverage for two real bugs a live Vitest run surfaced
+// (2026-09-03): the summary parser had no branch for "all tests
+// failed, nothing passed" (Vitest omits the "X passed" segment
+// entirely in that case), and the FAIL-file regex only matched
+// .test.ts/.tsx, never .test.js/.mjs — inherited unchanged from the
+// original private tool, which only ever ran against a TypeScript
+// project. These samples are captured verbatim from real `vitest run`
+// output, not invented — no Vitest devDependency needed to verify the
+// parser against them.
+
+test('parseVitestSummary handles the "all failed, nothing passed" case', () => {
+  const out = '\n Test Files  1 failed (1)\n      Tests  3 failed (3)\n   Start at  22:07:23\n';
+  const summary = parseVitestSummary(out);
+  assert.deepEqual(summary, { total: 3, passed: 0 });
+});
+
+test('parseVitestSummary handles the all-passed case', () => {
+  const out = '\n Test Files  1 passed (1)\n      Tests  2 passed (2)\n';
+  const summary = parseVitestSummary(out);
+  assert.deepEqual(summary, { total: 2, passed: 2 });
+});
+
+test('parseVitestSummary handles the mixed pass/fail case', () => {
+  const out = '\n Test Files  1 failed (1)\n      Tests  1 failed | 1 passed (2)\n';
+  const summary = parseVitestSummary(out);
+  assert.deepEqual(summary, { total: 2, passed: 1 });
+});
+
+test('parseVitestSummary returns null when there is no summary line at all', () => {
+  assert.equal(parseVitestSummary('Error: something exploded before any test ran\n'), null);
+});
+
+test('VITEST_FAIL_FILE_RE matches .test.js, not just .test.ts/.tsx', () => {
+  const out = ' FAIL  src/math.test.js > Calculator > TODO: assert expected behavior\nError: not yet implemented: Calculator\n';
+  const matches = [...out.matchAll(VITEST_FAIL_FILE_RE)].map((m) => m[1]);
+  assert.deepEqual(matches, ['src/math.test.js']);
+});
+
+test('VITEST_FAIL_FILE_RE still matches .test.tsx for TypeScript projects', () => {
+  const out = ' FAIL  src/components/Button.test.tsx > renders\n';
+  const matches = [...out.matchAll(VITEST_FAIL_FILE_RE)].map((m) => m[1]);
+  assert.deepEqual(matches, ['src/components/Button.test.tsx']);
 });
