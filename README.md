@@ -285,6 +285,12 @@ to fill in with real assertions, not something to leave as-is.
   bare-path conventions described above and nothing else out of the
   box. Extending it to other conventions means editing the two regexes
   in `src/docs.mjs` for now.
+- `driftcheck docs`'s declaration check strips `//` and `/* */`
+  comments and quoted-string contents before matching, so a removed
+  function only mentioned in a comment or a string isn't misread as
+  still declared — but it's a heuristic scan, not a real JS/TS parser.
+  A template literal with an embedded `${...}` expression, or a regex
+  literal containing `//`, can still evade it in either direction.
 - The "moved/renamed?" search in `driftcheck docs` reads the repo's own
   `.gitignore` for simple top-level directory names to skip, on top of
   a hardcoded list of common ones — not a full gitignore parser.
