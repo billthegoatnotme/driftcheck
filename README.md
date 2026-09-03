@@ -166,6 +166,16 @@ a documented limitation.) If a spec file has been edited enough that
 still checkpoints — it just reports which marker it couldn't find
 instead of silently skipping the update.
 
+`spec`/`spec close` also detect a subtler failure: the repo name that
+drives the filename comes from `package.json`'s `name` field, and if
+that field changes (or the file disappears) between runs, the detected
+name changes too — silently starting a second, orphaned version
+sequence under the new name instead of continuing the first. Both
+commands scan root for any other `*_spec_v0_NN.md` under a different
+name on every run and report it, rather than letting that happen
+quietly. Nothing is lost either way — it's just easy to miss without
+the warning.
+
 Each `close` also archives whatever it just superseded — every older
 `<repo>_spec_v0_NN.md` moves into `<repo>_spec_previous/`, and every
 older handoff into `<repo>_thread_handoff_previous/`, so the repo root
