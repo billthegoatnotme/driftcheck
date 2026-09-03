@@ -117,8 +117,8 @@ Every run appends a line to `<repo>/.driftcheck/docs-history.jsonl`.
 
 Scaffolds a versioned project spec — a fixed governance document (how
 AI and human collaborators work together on this repo, read fresh each
-run from [`templates/manifesto.md`](templates/manifesto.md) so it can
-never drift from what actually gets generated) plus a "What We're
+run from [`templates/drift_check_manifesto.md`](templates/drift_check_manifesto.md)
+so it can never drift from what actually gets generated) plus a "What We're
 Building" section populated from a live `driftcheck repo`/`docs` scan,
 and a Checkpoint Log for tracking what happened over time:
 
@@ -173,7 +173,7 @@ a literal string.
 - `driftcheck spec`'s Pipeline Architecture table ships as a fill-in
   placeholder, not auto-detected roles — it's a governance template,
   not something inferable from repo state. Edit the wording for all
-  future specs by editing `templates/manifesto.md` directly; it's read
+  future specs by editing `templates/drift_check_manifesto.md` directly; it's read
   fresh on every run, not baked into the code.
 - `driftcheck spec close` only carries the Checkpoint Log forward
   automatically; every other section (including "Purpose") regenerates

@@ -68,8 +68,8 @@ function extractCheckpointLog(oldSpecFile) {
 // The governing document driftcheck ships, not data pulled from any
 // one repo — a single source of truth read fresh each run, so this
 // file and what's actually generated can never drift apart from each
-// other. See templates/manifesto.md.
-const MANIFESTO = readFileSync(join(HERE, '..', 'templates', 'manifesto.md'), 'utf8').trim();
+// other. See templates/drift_check_manifesto.md.
+const MANIFESTO = readFileSync(join(HERE, '..', 'templates', 'drift_check_manifesto.md'), 'utf8').trim();
 
 function detectedSection(repo) {
   const repoOut = runRepoCheck([repo]).split('\n').slice(1).join('\n');
