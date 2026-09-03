@@ -50,6 +50,55 @@ test('Prisma present but no .env.local is reported inconclusive, not skipped', (
   } finally { cleanup(dir); }
 });
 
+test('a "driftcheck:db" script reports OK on a zero exit, no Prisma needed', () => {
+  const dir = makeTempDir();
+  try {
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({
+      name: 'x',
+      scripts: { 'driftcheck:db': 'node -e "process.exit(0)"' },
+    }));
+    const out = runRepoCheck([dir]);
+    assert.match(out, /DB\s+OK\s+`node -e "process\.exit\(0\)"` reports no drift/);
+  } finally { cleanup(dir); }
+});
+
+test('a "driftcheck:db" script reports drift on a nonzero exit, showing the real output not npm\'s echo', () => {
+  const dir = makeTempDir();
+  try {
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({
+      name: 'x',
+      scripts: { 'driftcheck:db': 'node -e "console.error(\'3 pending migrations\'); process.exit(1)"' },
+    }));
+    const out = runRepoCheck([dir]);
+    assert.match(out, /DB\s+⚠️\s+`.+` reported drift \(nonzero exit\) — first line: 3 pending migrations/);
+    assert.doesNotMatch(out, /first line: > /); // must skip npm's own "> driftcheck:db" echo line
+  } finally { cleanup(dir); }
+});
+
+test('a "driftcheck:db" script takes priority over Prisma auto-detection when both are present', () => {
+  const dir = makeTempDir();
+  try {
+    mkdirSync(join(dir, 'prisma'), { recursive: true });
+    writeFileSync(join(dir, 'prisma', 'schema.prisma'), '// schema\n');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({
+      name: 'x',
+      scripts: { 'driftcheck:db': 'node -e "process.exit(0)"' },
+    }));
+    const out = runRepoCheck([dir]);
+    assert.match(out, /DB\s+OK\s+`node -e "process\.exit\(0\)"` reports no drift/);
+    assert.doesNotMatch(out, /Prisma/);
+  } finally { cleanup(dir); }
+});
+
+test('no "driftcheck:db" script and no Prisma schema skips cleanly, naming both', () => {
+  const dir = makeTempDir();
+  try {
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'x' }));
+    const out = runRepoCheck([dir]);
+    assert.match(out, /DB\s+—\s+no prisma\/schema\.prisma and no "driftcheck:db" script — skipping/);
+  } finally { cleanup(dir); }
+});
+
 test('--tests with no "test" script in package.json skips cleanly', () => {
   const dir = makeTempDir();
   try {
