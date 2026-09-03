@@ -1,6 +1,6 @@
 {
   "name": "driftcheck",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "A truth instrument for three kinds of drift: repo state, reference docs, and thread-to-thread continuity.",
   "type": "module",
   "bin": {
