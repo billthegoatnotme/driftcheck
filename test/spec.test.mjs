@@ -91,6 +91,20 @@ test('close preserves hand-edits to the governance/Purpose sections instead of o
   } finally { cleanup(dir); }
 });
 
+test('warns when a spec file exists under a different detected name, instead of silently forking a new sequence', () => {
+  const dir = makeTempDir();
+  try {
+    // Simulate a real failure mode: an earlier spec sequence existed
+    // under one name (e.g. a package.json "name" field that's since
+    // changed or disappeared), and the currently-detected name is
+    // different, so init would otherwise fork a silent second history.
+    writeFileSync(join(dir, 'OldName_spec_v0_03.md'), '# OldName — spec v0.03\n');
+
+    const out = runSpecCommand([dir]);
+    assert.match(out, /also found spec file\(s\) under a different name \(OldName\)/);
+  } finally { cleanup(dir); }
+});
+
 test('close reports plainly, not silently, if a section marker is missing to patch', () => {
   const dir = makeTempDir();
   try {
