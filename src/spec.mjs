@@ -20,7 +20,7 @@
 //  should guess at. driftcheck stays dependency-free either way.
 // ─────────────────────────────────────────────────────────────────────
 
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runRepoCheck } from './repo.mjs';
@@ -46,15 +46,40 @@ const sanitize = (name) => name.replace(/[^A-Za-z0-9_.-]+/g, '-');
 
 const specPath = (repo, name, v) => join(repo, `${name}_spec_v0_${pad2(v)}.md`);
 const handoffPath = (repo, name, v) => join(repo, `${name}_thread_handoff_v0_${pad2(v)}.md`);
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// Finds <name>_<label>_v0_NN.md files sitting in the repo root — never
+// recurses into the _previous/ archive folders, so already-archived
+// versions are never re-processed.
+function findVersioned(repo, name, label) {
+  const re = new RegExp(`^${escapeRe(name)}_${label}_v0_(\\d+)\\.md$`);
+  return readdirSync(repo)
+    .map((file) => ({ file, m: file.match(re) }))
+    .filter(({ m }) => m)
+    .map(({ file, m }) => ({ file, version: Number(m[1]) }));
+}
 
 function latestSpecVersion(repo, name) {
-  const re = new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}_spec_v0_(\\d+)\\.md$`);
-  let max = 0;
-  for (const f of readdirSync(repo)) {
-    const m = f.match(re);
-    if (m) max = Math.max(max, Number(m[1]));
+  const versions = findVersioned(repo, name, 'spec').map((v) => v.version);
+  return versions.length ? Math.max(...versions) : 0;
+}
+
+// Moves every root-level <name>_<label>_v0_NN.md except the one just
+// written into <name>_<label>_previous/ — never deletes, and sweeps any
+// stragglers left over from before this existed, not just the single
+// most-recently-superseded file.
+function archivePrevious(repo, name, label, keepVersion) {
+  const moved = [];
+  for (const { file, version } of findVersioned(repo, name, label)) {
+    if (version === keepVersion) continue;
+    const dir = join(repo, `${name}_${label}_previous`);
+    const dest = join(dir, file);
+    if (existsSync(dest)) continue; // already archived under this name — leave it alone
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    renameSync(join(repo, file), dest);
+    moved.push(file);
   }
-  return max;
+  return moved;
 }
 
 function extractCheckpointLog(oldSpecFile) {
@@ -155,5 +180,13 @@ export function runSpecCommand(args) {
   const prevLog = extractCheckpointLog(specPath(repo, name, latest));
   writeFileSync(specPath(repo, name, next), buildSpecBody(repo, name, next, prevLog));
   writeFileSync(handoffPath(repo, name, next), buildHandoffBody(name, next, latest));
-  return `${header}\nSPEC     OK  checkpointed → ${name}_spec_v0_${pad2(next)}.md + ${name}_thread_handoff_v0_${pad2(next)}.md`;
+
+  const archivedSpecs = archivePrevious(repo, name, 'spec', next);
+  const archivedHandoffs = archivePrevious(repo, name, 'thread_handoff', next);
+  const archiveParts = [];
+  if (archivedSpecs.length) archiveParts.push(`${archivedSpecs.length} spec(s) → ${name}_spec_previous/`);
+  if (archivedHandoffs.length) archiveParts.push(`${archivedHandoffs.length} handoff(s) → ${name}_thread_handoff_previous/`);
+  const archiveNote = archiveParts.length ? ` (archived ${archiveParts.join(', ')})` : '';
+
+  return `${header}\nSPEC     OK  checkpointed → ${name}_spec_v0_${pad2(next)}.md + ${name}_thread_handoff_v0_${pad2(next)}.md${archiveNote}`;
 }

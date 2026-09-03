@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { runSpecCommand } from '../src/spec.mjs';
 import { makeTempDir, cleanup } from './helpers.mjs';
@@ -33,6 +33,34 @@ test('close bumps the version and carries the Checkpoint Log forward', () => {
     assert.match(finalSpec, /### Checkpoint 3/);
     assert.match(finalSpec, /### Checkpoint 2/);
     assert.match(finalSpec, /### Checkpoint 1/);
+  } finally { cleanup(dir); }
+});
+
+test('close archives superseded versions, keeping only the current one in root', () => {
+  const dir = makeTempDir();
+  try {
+    const name = basename(dir);
+    runSpecCommand([dir]);
+    const out2 = runSpecCommand(['close', dir]);
+    assert.match(out2, /archived 1 spec\(s\) → \S+_spec_previous\//);
+    assert.doesNotMatch(out2, /handoff\(s\)/); // no prior handoff existed yet to archive
+
+    const out3 = runSpecCommand(['close', dir]);
+    assert.match(out3, /archived 1 spec\(s\) → \S+_spec_previous\/, 1 handoff\(s\) → \S+_thread_handoff_previous\//);
+
+    // Root holds only the current version.
+    const rootFiles = readdirSync(dir);
+    assert.ok(rootFiles.includes(`${name}_spec_v0_03.md`));
+    assert.ok(rootFiles.includes(`${name}_thread_handoff_v0_03.md`));
+    assert.ok(!rootFiles.includes(`${name}_spec_v0_01.md`));
+    assert.ok(!rootFiles.includes(`${name}_spec_v0_02.md`));
+    assert.ok(!rootFiles.includes(`${name}_thread_handoff_v0_02.md`));
+
+    // Nothing was deleted — it all moved into the archive folders.
+    const archivedSpecs = readdirSync(join(dir, `${name}_spec_previous`));
+    assert.deepEqual(archivedSpecs.sort(), [`${name}_spec_v0_01.md`, `${name}_spec_v0_02.md`]);
+    const archivedHandoffs = readdirSync(join(dir, `${name}_thread_handoff_previous`));
+    assert.deepEqual(archivedHandoffs, [`${name}_thread_handoff_v0_02.md`]);
   } finally { cleanup(dir); }
 });
 

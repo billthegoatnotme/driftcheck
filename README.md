@@ -150,6 +150,17 @@ own spec and handoff docs were actually written.
 `package.json`'s `name` field, falling back to the directory name), not
 a literal string.
 
+Each `close` also archives whatever it just superseded — every older
+`<repo>_spec_v0_NN.md` moves into `<repo>_spec_previous/`, and every
+older handoff into `<repo>_thread_handoff_previous/`, so the repo root
+always shows exactly one current spec and one current handoff no matter
+how many checkpoints have happened. Nothing is ever deleted, only moved
+— older versions still hold their own point-in-time "Detected" snapshot
+and whatever was hand-written into "Purpose" at the time, neither of
+which the Checkpoint Log's carried-forward entries capture. The output
+line reports what got archived, since moving files silently would cut
+against driftcheck's own verdict-first stance everywhere else.
+
 ## Verdict legend
 
 | Mark | Meaning |
