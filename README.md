@@ -39,6 +39,9 @@ npm link
 driftcheck --help
 ```
 
+Run the test suite with `npm test` (Node's built-in test runner —
+no extra dependencies).
+
 ## `driftcheck repo`
 
 Checks whether your picture of the repo's *state* is current:
