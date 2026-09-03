@@ -54,9 +54,12 @@ driftcheck repo /path/to/other/repo --tests --build
 ```
 
 - **GIT** — HEAD vs. a fresh fetch of `origin/main`: ahead/behind counts,
-  a dirty tree, stale local branches already merged upstream, and any
-  agent worktrees under `.claude/worktrees` that can silently pollute
-  test or build globs.
+  a dirty tree, stale local branches already merged upstream, any local
+  branch with real commits *not* in `origin/main` whose own PR already
+  shows `MERGED`/`CLOSED` on GitHub (work pushed after the merge
+  happened, invisible to both the sync check above and the PRS check
+  below — see the note after this list), and any agent worktrees under
+  `.claude/worktrees` that can silently pollute test or build globs.
 - **PRS** — open pull requests via the `gh` CLI. If a PR you believed
   was merged still shows up here, it isn't merged yet.
 - **DB** — checks a `"driftcheck:db"` script in the target's
@@ -76,6 +79,14 @@ driftcheck repo /path/to/other/repo --tests --build
   — per-file flake classification depends on Vitest's own output format
   and file-targeting convention, and doesn't generalize safely.
 - **BUILD** (`--build`) — runs `npm run build`.
+
+A merged PR only means the commits it had *at merge time* made it into
+`origin/main` — if a branch gets pushed to again afterward, those new
+commits aren't included, even though the PR itself still shows
+`MERGED`. That's invisible to the ahead/behind check above (it only
+looks at your current branch) and to the PRS check (it only lists
+*open* PRs), so GIT checks every other local branch for exactly this:
+real commits absent from `origin/main` whose own PR is already closed.
 
 Every run appends a line to `<repo>/.driftcheck/repo-history.jsonl` —
 your own longitudinal log of that repo's health, run over run. Consider
