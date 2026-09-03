@@ -248,8 +248,10 @@ to fill in with real assertions, not something to leave as-is.
 
 - `driftcheck repo`'s DB check has no built-in ORM-specific knowledge
   beyond the Prisma fallback; every other ORM needs a `"driftcheck:db"`
-  script wired up in `package.json`, reporting only pass/fail, not
-  migration-level detail the way the Prisma path does.
+  script wired up in `package.json`. It surfaces up to 3 lines of the
+  script's own output on drift, but still can't parse migration-level
+  detail out of arbitrary formats the way the Prisma path does — that
+  detail is only as good as what the script itself prints.
 - `driftcheck repo`'s flake-vs-real test triage is Vitest-specific;
   other runners get pass/fail only.
 - `driftcheck repo`/`driftcheck vitest` operate on one target directory
