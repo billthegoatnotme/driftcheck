@@ -16,6 +16,34 @@ test('correct arrow-pair and bare-path references pass silently', () => {
   } finally { cleanup(dir); }
 });
 
+// Regression coverage for the worst finding from the first external
+// review: declRe ran against raw file content with no awareness of
+// comments or strings, so a genuinely removed declaration could still
+// read as "still declared" — a false *negative*, exactly backwards for
+// a tool whose whole job is catching drift.
+
+test('a declaration mentioned only in a comment is flagged as removed, not still declared', () => {
+  const dir = makeTempDir();
+  try {
+    mkdirSync(join(dir, 'src'), { recursive: true });
+    writeFileSync(join(dir, 'src', 'lib.js'), '// function doThing() was removed\nfunction other() { return 1; }\n');
+    writeFileSync(join(dir, 'CLAUDE.md'), '`src/lib.js -> doThing()`\n');
+    const out = runDocsCheck([dir]);
+    assert.match(out, /doThing\(\) — not declared anywhere in the repo/);
+  } finally { cleanup(dir); }
+});
+
+test('a declaration mentioned only inside a string literal is flagged as removed, not still declared', () => {
+  const dir = makeTempDir();
+  try {
+    mkdirSync(join(dir, 'src'), { recursive: true });
+    writeFileSync(join(dir, 'src', 'lib.js'), 'const note = "function doThing()";\nfunction other() { return 1; }\n');
+    writeFileSync(join(dir, 'CLAUDE.md'), '`src/lib.js -> doThing()`\n');
+    const out = runDocsCheck([dir]);
+    assert.match(out, /doThing\(\) — not declared anywhere in the repo/);
+  } finally { cleanup(dir); }
+});
+
 test('renamed-away function is flagged as fully missing', () => {
   const dir = makeTempDir();
   try {
@@ -85,6 +113,30 @@ test('gitignore parsing ignores wildcard and nested-path lines rather than guess
   } finally { cleanup(dir); }
 });
 
+test('a bare path that resolves outside the repo root is flagged, not silently checked', () => {
+  const outer = makeTempDir();
+  try {
+    const repo = join(outer, 'repo');
+    mkdirSync(repo, { recursive: true });
+    writeFileSync(join(outer, 'secret.js'), '// a real file, just outside the repo\n');
+    writeFileSync(join(repo, 'CLAUDE.md'), '`../secret.js`\n');
+    const out = runDocsCheck([repo]);
+    assert.match(out, /\.\.\/secret\.js — resolves outside the repo root — not checked/);
+  } finally { cleanup(outer); }
+});
+
+test('an arrow-pair file path that resolves outside the repo root is flagged, not silently read', () => {
+  const outer = makeTempDir();
+  try {
+    const repo = join(outer, 'repo');
+    mkdirSync(repo, { recursive: true });
+    writeFileSync(join(outer, 'secret.js'), 'function leakedFn() {}\n');
+    writeFileSync(join(repo, 'CLAUDE.md'), '`../secret.js -> leakedFn()`\n');
+    const out = runDocsCheck([repo]);
+    assert.match(out, /leakedFn\(\) — file path resolves outside the repo root — not checked/);
+  } finally { cleanup(outer); }
+});
+
 test('missing bare path is flagged', () => {
   const dir = makeTempDir();
   try {
@@ -129,5 +181,16 @@ test('accepts the ASCII arrow as well as the unicode arrow', () => {
     writeFileSync(join(dir, 'CLAUDE.md'), '`src.js -> thing`\n');
     const out = runDocsCheck([dir]);
     assert.doesNotMatch(out, /drifted/);
+  } finally { cleanup(dir); }
+});
+
+test('NOTES logs a repo-relative history path, not an absolute one', () => {
+  const dir = makeTempDir();
+  try {
+    writeFileSync(join(dir, 'CLAUDE.md'), 'no checkable refs here\n');
+    const out = runDocsCheck([dir]);
+    const notesLine = out.split('\n').find((l) => l.trim().startsWith('NOTES'));
+    assert.match(notesLine, /NOTES\s+run #1 logged → \.driftcheck\/docs-history\.jsonl$/);
+    assert.doesNotMatch(notesLine, /[A-Za-z]:[\\/]/);
   } finally { cleanup(dir); }
 });
