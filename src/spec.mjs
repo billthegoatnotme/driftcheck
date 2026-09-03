@@ -11,13 +11,15 @@
 //  run against a repo that doesn't have one yet. It's idempotent — if
 //  a spec already exists, it does nothing.
 //
-//  `driftcheck spec close` checkpoints forward: it writes the next
-//  <repo>_spec_v0_0N.md (state refreshed via the same repo/docs checks
-//  above) and a paired <repo>_thread_handoff_v0_0N.md meant to be
-//  pasted at the start of the next thread. The reflective sections in
-//  both are left as explicit prompts — narrating what happened and why
-//  is a language-generation task, not something a deterministic script
-//  should guess at. driftcheck stays dependency-free either way.
+//  `driftcheck spec close` checkpoints forward. It does NOT regenerate
+//  the file from scratch — it reads the existing latest spec whole and
+//  patches only what genuinely needs refreshing (the Detected scan, a
+//  new Checkpoint Log entry), leaving everything else — including any
+//  hand-edits to the governance sections or Purpose — exactly as it
+//  was. An earlier version regenerated the whole document from the
+//  template every time, which silently destroyed any real customization
+//  a team made; that's a real data-loss risk for anyone actually using
+//  this file, not just a naming inconvenience.
 // ─────────────────────────────────────────────────────────────────────
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
@@ -82,26 +84,21 @@ function archivePrevious(repo, name, label, keepVersion) {
   return moved;
 }
 
-function extractCheckpointLog(oldSpecFile) {
-  if (!existsSync(oldSpecFile)) return '';
-  const marker = '## Checkpoint Log';
-  const idx = readFileSync(oldSpecFile, 'utf8').indexOf(marker);
-  if (idx === -1) return '';
-  return readFileSync(oldSpecFile, 'utf8').slice(idx + marker.length).trim();
-}
-
 // The governing document driftcheck ships, not data pulled from any
 // one repo — a single source of truth read fresh each run, so this
 // file and what's actually generated can never drift apart from each
-// other. See templates/drift_check_manifesto.md.
+// other. See templates/drift_check_manifesto.md. Only used building the
+// very first version — spec close patches an existing file in place
+// instead, so it never re-reads this for a project already underway.
 const MANIFESTO = readFileSync(join(HERE, '..', 'templates', 'drift_check_manifesto.md'), 'utf8').trim();
 
-function detectedSection(repo) {
+// Just the scan block — no surrounding "## What We're Building" or
+// "### Purpose", so this can be spliced into an existing file (spec
+// close) as easily as assembled into a brand new one (spec init).
+function detectedBlock(repo) {
   const repoOut = runRepoCheck([repo]).split('\n').slice(1).join('\n');
   const docsOut = runDocsCheck([repo]).split('\n').slice(1).join('\n');
-  return `## What We're Building
-
-### Detected
+  return `### Detected
 ${BT}driftcheck repo${BT}:
 ${FENCE}
 ${repoOut}
@@ -110,31 +107,60 @@ ${FENCE}
 ${BT}driftcheck docs${BT}:
 ${FENCE}
 ${docsOut}
-${FENCE}
+${FENCE}`;
+}
+
+function checkpointStub(version) {
+  return `### Checkpoint ${version} — ${new Date().toISOString().slice(0, 10)}
+
+_Not inferable from repo data — fill this in: what got built or
+decided since the last checkpoint._`;
+}
+
+// The very first version — nothing to preserve yet, so this is the
+// only place the document gets assembled from scratch.
+function buildInitialSpecBody(repo, name) {
+  return `# ${name} — spec v0.${pad2(1)}
+
+${MANIFESTO}
+
+## What We're Building
+
+${detectedBlock(repo)}
 
 ### Purpose
 
 _Not inferable from repo data — fill this in: what is this, and why
-does it exist?_`;
-}
-
-function buildSpecBody(repo, name, version, prevLog) {
-  const stub = `### Checkpoint ${version} — ${new Date().toISOString().slice(0, 10)}
-
-_Not inferable from repo data — fill this in: what got built or
-decided since the last checkpoint._`;
-  const log = prevLog ? `${stub}\n\n${prevLog}` : stub;
-
-  return `# ${name} — spec v0.${pad2(version)}
-
-${MANIFESTO}
-
-${detectedSection(repo)}
+does it exist?_
 
 ## Checkpoint Log
 
-${log}
+${checkpointStub(1)}
 `;
+}
+
+// Checkpointing forward: read the existing file whole and patch only
+// what needs refreshing, in place. Everything else — hand-edited
+// governance sections, a filled-in Pipeline Architecture table,
+// whatever got written into Purpose — survives untouched, because it's
+// never regenerated from the template at all past version 1.
+function patchSpecBody(existingContent, repo, name, newVersion) {
+  const notes = [];
+  let content = existingContent;
+
+  const titled = content.replace(/^# .+/, `# ${name} — spec v0.${pad2(newVersion)}`);
+  if (titled === content) notes.push('title line not found — version number in the heading wasn\'t updated');
+  content = titled;
+
+  const withDetected = content.replace(/### Detected[\s\S]*?(?=\n### )/, `${detectedBlock(repo)}\n`);
+  if (withDetected === content) notes.push('"### Detected" section not found — scan snapshot wasn\'t refreshed');
+  content = withDetected;
+
+  const withCheckpoint = content.replace(/## Checkpoint Log\n\n/, `## Checkpoint Log\n\n${checkpointStub(newVersion)}\n\n`);
+  if (withCheckpoint === content) notes.push('"## Checkpoint Log" section not found — new checkpoint wasn\'t recorded');
+  content = withCheckpoint;
+
+  return { content, notes };
 }
 
 function buildHandoffBody(name, version, prevVersion) {
@@ -169,7 +195,7 @@ export function runSpecCommand(args) {
     if (latest > 0) {
       return `${header}\nSPEC     OK  ${name}_spec_v0_${pad2(latest)}.md already exists — nothing to do (${BT}driftcheck spec close${BT} checkpoints forward)`;
     }
-    writeFileSync(specPath(repo, name, 1), buildSpecBody(repo, name, 1, ''));
+    writeFileSync(specPath(repo, name, 1), buildInitialSpecBody(repo, name));
     return `${header}\nSPEC     OK  created ${name}_spec_v0_01.md`;
   }
 
@@ -177,8 +203,9 @@ export function runSpecCommand(args) {
     return `${header}\nSPEC     ??  no existing ${name}_spec_v0_NN.md found — run ${BT}driftcheck spec${BT} first`;
   }
   const next = latest + 1;
-  const prevLog = extractCheckpointLog(specPath(repo, name, latest));
-  writeFileSync(specPath(repo, name, next), buildSpecBody(repo, name, next, prevLog));
+  const existing = readFileSync(specPath(repo, name, latest), 'utf8');
+  const { content, notes } = patchSpecBody(existing, repo, name, next);
+  writeFileSync(specPath(repo, name, next), content);
   writeFileSync(handoffPath(repo, name, next), buildHandoffBody(name, next, latest));
 
   const archivedSpecs = archivePrevious(repo, name, 'spec', next);
@@ -188,5 +215,7 @@ export function runSpecCommand(args) {
   if (archivedHandoffs.length) archiveParts.push(`${archivedHandoffs.length} handoff(s) → ${name}_thread_handoff_previous/`);
   const archiveNote = archiveParts.length ? ` (archived ${archiveParts.join(', ')})` : '';
 
-  return `${header}\nSPEC     OK  checkpointed → ${name}_spec_v0_${pad2(next)}.md + ${name}_thread_handoff_v0_${pad2(next)}.md${archiveNote}`;
+  const lines = [`${header}\nSPEC     OK  checkpointed → ${name}_spec_v0_${pad2(next)}.md + ${name}_thread_handoff_v0_${pad2(next)}.md${archiveNote}`];
+  for (const note of notes) lines.push(`         ??  ${note}`);
+  return lines.join('\n');
 }

@@ -64,6 +64,47 @@ test('close archives superseded versions, keeping only the current one in root',
   } finally { cleanup(dir); }
 });
 
+test('close preserves hand-edits to the governance/Purpose sections instead of overwriting them', () => {
+  const dir = makeTempDir();
+  try {
+    const name = basename(dir);
+    runSpecCommand([dir]);
+
+    const v1Path = join(dir, `${name}_spec_v0_01.md`);
+    let v1 = readFileSync(v1Path, 'utf8');
+    // Simulate a real team actually using this file: fill in the
+    // Pipeline Architecture placeholder and write real Purpose content.
+    v1 = v1.replace('_fill in — e.g. Frontend_', 'Backend').replace('_what this agent is responsible for_', 'Core game logic');
+    v1 = v1.replace(
+      '_Not inferable from repo data — fill this in: what is this, and why\ndoes it exist?_',
+      'A real-time multiplayer card game.',
+    );
+    writeFileSync(v1Path, v1);
+
+    runSpecCommand(['close', dir]);
+
+    const v2 = readFileSync(join(dir, `${name}_spec_v0_02.md`), 'utf8');
+    assert.match(v2, /\| Backend \| 1 Agent \| Core game logic \|/);
+    assert.match(v2, /A real-time multiplayer card game\./);
+    // The Detected section should still have refreshed, though.
+    assert.match(v2, /### Checkpoint 2/);
+  } finally { cleanup(dir); }
+});
+
+test('close reports plainly, not silently, if a section marker is missing to patch', () => {
+  const dir = makeTempDir();
+  try {
+    const name = basename(dir);
+    runSpecCommand([dir]);
+    const v1Path = join(dir, `${name}_spec_v0_01.md`);
+    const mangled = readFileSync(v1Path, 'utf8').replace('## Checkpoint Log', '## Renamed Section');
+    writeFileSync(v1Path, mangled);
+
+    const out = runSpecCommand(['close', dir]);
+    assert.match(out, /\?\?\s+"## Checkpoint Log" section not found/);
+  } finally { cleanup(dir); }
+});
+
 test('close with no existing spec errors cleanly instead of guessing', () => {
   const dir = makeTempDir();
   try {
