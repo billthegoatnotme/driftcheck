@@ -129,11 +129,15 @@ export function runRepoCheck(args) {
       // Knex, or anything else; exit 0 means no drift, by convention.
       const r = sh(repo, 'npm run driftcheck:db', { timeout: 90_000 });
       // Skip npm's own "> driftcheck:db" / "> <command>" echo lines to
-      // find the first line the script itself actually produced.
-      const firstRealLine = r.out.split('\n').find((l) => l.trim() && !l.trim().startsWith('>')) ?? '';
+      // surface what the script itself actually produced. Up to 3
+      // lines, not just the first — a script that prints real detail
+      // (which migrations, which tables) shouldn't get truncated to
+      // its own header.
+      const realLines = r.out.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('>'));
+      const detail = realLines.slice(0, 3).join(' | ') + (realLines.length > 3 ? ' …' : '');
       say(r.ok
         ? `DB       OK  \`${customDbCmd}\` reports no drift`
-        : `DB       ⚠️  \`${customDbCmd}\` reported drift (nonzero exit) — first line: ${firstRealLine}`);
+        : `DB       ⚠️  \`${customDbCmd}\` reported drift (nonzero exit): ${detail || '(no output)'}`);
       record.db = { custom: true, ok: r.ok };
     } else {
       const schemaPath = join(repo, 'prisma', 'schema.prisma');

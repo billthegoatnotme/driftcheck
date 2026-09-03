@@ -70,8 +70,22 @@ test('a "driftcheck:db" script reports drift on a nonzero exit, showing the real
       scripts: { 'driftcheck:db': 'node -e "console.error(\'3 pending migrations\'); process.exit(1)"' },
     }));
     const out = runRepoCheck([dir]);
-    assert.match(out, /DB\s+⚠️\s+`.+` reported drift \(nonzero exit\) — first line: 3 pending migrations/);
-    assert.doesNotMatch(out, /first line: > /); // must skip npm's own "> driftcheck:db" echo line
+    assert.match(out, /DB\s+⚠️\s+`.+` reported drift \(nonzero exit\): 3 pending migrations/);
+    assert.doesNotMatch(out, /: > /); // must skip npm's own "> driftcheck:db" echo line
+  } finally { cleanup(dir); }
+});
+
+test('a "driftcheck:db" script surfaces up to 3 lines of real detail, not just the first', () => {
+  const dir = makeTempDir();
+  try {
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({
+      name: 'x',
+      scripts: {
+        'driftcheck:db': 'node -e "console.error(\'line one\'); console.error(\'line two\'); console.error(\'line three\'); console.error(\'line four\'); process.exit(1)"',
+      },
+    }));
+    const out = runRepoCheck([dir]);
+    assert.match(out, /: line one \| line two \| line three …$/m);
   } finally { cleanup(dir); }
 });
 

@@ -40,13 +40,32 @@ const pathRe = new RegExp(`^[\\w.-]+(?:/[\\w.-]+)+\\.(${SRC_EXT})$`);
 const arrowRe = new RegExp(`^([\\w./-]+\\.(${SRC_EXT}))\\s*(?:→|->)\\s*([A-Za-z_$][\\w$]*)\\(?\\)?$`);
 const declRe = (fn) => new RegExp(`\\b(?:export\\s+)?(?:default\\s+)?(?:async\\s+)?(?:function|const|let|class)\\s+${fn}\\b`);
 
-function walkFiles(dir, exts, out = []) {
+// Simple top-level directory names from the repo's own .gitignore, on
+// top of the hardcoded SKIP_DIRS — not a full gitignore parser.
+// Wildcards, negations, and nested paths (anything with a "/" other
+// than a single trailing one) are left alone rather than guessed at;
+// only unambiguous bare directory names get added.
+function gitignoreDirs(repo) {
+  const path = join(repo, '.gitignore');
+  if (!existsSync(path)) return [];
+  const dirs = [];
+  for (const raw of readFileSync(path, 'utf8').split('\n')) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#') || line.startsWith('!')) continue;
+    if (/[*?[\]]/.test(line)) continue;
+    const name = line.replace(/\/$/, '');
+    if (name && !name.includes('/')) dirs.push(name);
+  }
+  return dirs;
+}
+
+function walkFiles(dir, exts, skipDirs, out = []) {
   let entries;
   try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return out; }
   for (const e of entries) {
     if (e.isDirectory()) {
-      if (SKIP_DIRS.has(e.name)) continue;
-      walkFiles(join(dir, e.name), exts, out);
+      if (skipDirs.has(e.name)) continue;
+      walkFiles(join(dir, e.name), exts, skipDirs, out);
     } else if (exts.some((ext) => e.name.endsWith(`.${ext}`))) {
       out.push(join(dir, e.name));
     }
@@ -86,6 +105,7 @@ export function runDocsCheck(args) {
   }
   const repo = resolve(args.find((a, i) => !a.startsWith('--') && args[i - 1] !== '--file') ?? process.cwd());
   const HISTORY = join(repo, '.driftcheck', 'docs-history.jsonl');
+  const skipDirs = new Set([...SKIP_DIRS, ...gitignoreDirs(repo)]);
 
   const candidates = fileFlags.length ? fileFlags : DEFAULT_CANDIDATES;
   const targets = candidates.filter((f) => existsSync(join(repo, f)));
@@ -125,7 +145,7 @@ export function runDocsCheck(args) {
       const content = readFileSync(fnFull, 'utf8');
       if (declRe(fn).test(content)) continue; // found exactly where the document claims
 
-      const elsewhere = walkFiles(repo, CODE_EXT).find((f) => {
+      const elsewhere = walkFiles(repo, CODE_EXT, skipDirs).find((f) => {
         if (f === fnFull) return false;
         try { return declRe(fn).test(readFileSync(f, 'utf8')); } catch { return false; }
       });
