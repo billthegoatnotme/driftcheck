@@ -238,7 +238,12 @@ export function runSpecCommand(args) {
   if (archivedHandoffs.length) archiveParts.push(`${archivedHandoffs.length} handoff(s) → ${name}_thread_handoff_previous/`);
   const archiveNote = archiveParts.length ? ` (archived ${archiveParts.join(', ')})` : '';
 
-  const lines = [`${header}\nSPEC     OK  checkpointed → ${name}_spec_v0_${pad2(next)}.md + ${name}_thread_handoff_v0_${pad2(next)}.md${archiveNote}`];
+  // A non-empty `notes` means a patch step above (the Detected scan, the
+  // Checkpoint Log insert) actually failed to apply — the headline verdict
+  // needs to say so, not read as a clean OK with the caveats buried below.
+  const verdict = notes.length > 0 ? '⚠️ ' : 'OK ';
+  const summary = notes.length > 0 ? 'checkpointed (partial)' : 'checkpointed';
+  const lines = [`${header}\nSPEC     ${verdict} ${summary} → ${name}_spec_v0_${pad2(next)}.md + ${name}_thread_handoff_v0_${pad2(next)}.md${archiveNote}`];
   for (const note of notes) lines.push(`         ??  ${note}`);
   if (driftLine) lines.push(driftLine.trimStart());
   return lines.join('\n');
