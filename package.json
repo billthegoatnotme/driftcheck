@@ -1,8 +1,11 @@
 {
-  "name": "driftcheck",
+  "name": "@billthegoatnotme/driftcheck",
   "version": "1.0.0",
   "description": "A truth instrument for three kinds of drift: repo state, reference docs, and thread-to-thread continuity.",
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/billthegoatnotme/driftcheck.git"
