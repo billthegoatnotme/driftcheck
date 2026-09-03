@@ -89,6 +89,39 @@ test('does not flag a local branch whose PR is still open', () => {
   );
 });
 
+test('.driftcheck/ does not count as a dirty file, even when the repo does not gitignore it', () => {
+  const dir = makeTempDir();
+  try {
+    git(dir, ['init', '-q']);
+    git(dir, ['config', 'user.email', 't@example.com']);
+    git(dir, ['config', 'user.name', 'Test']);
+    writeFileSync(join(dir, 'a.txt'), 'hi\n');
+    git(dir, ['add', '-A']);
+    git(dir, ['commit', '-q', '-m', 'init']);
+
+    // This run's own history write lands in .driftcheck/ — without the
+    // exclusion, that alone would flip the tree from clean to dirty
+    // before the command even finishes.
+    const out = runRepoCheck([dir]);
+    assert.match(out, /tree clean/);
+    assert.doesNotMatch(out, /dirty file\(s\)/);
+  } finally { cleanup(dir); }
+});
+
+test('NOTES logs a repo-relative history path, not an absolute one', () => {
+  const dir = makeTempDir();
+  try {
+    const out = runRepoCheck([dir]);
+    // The header line legitimately shows the target repo's own absolute
+    // path (and is stripped off before `driftcheck spec` embeds this
+    // output) — only the NOTES line itself is the leak this guards
+    // against, since that line is what actually ends up committed.
+    const notesLine = out.split('\n').find((l) => l.startsWith('NOTES'));
+    assert.match(notesLine, /^NOTES\s+run #1 logged → \.driftcheck\/repo-history\.jsonl$/);
+    assert.doesNotMatch(notesLine, /[A-Za-z]:[\\/]/);
+  } finally { cleanup(dir); }
+});
+
 test('no prisma/schema.prisma skips the DB check cleanly', () => {
   const dir = makeTempDir();
   try {
@@ -127,7 +160,7 @@ test('a "driftcheck:db" script reports drift on a nonzero exit, showing the real
       scripts: { 'driftcheck:db': 'node -e "console.error(\'3 pending migrations\'); process.exit(1)"' },
     }));
     const out = runRepoCheck([dir]);
-    assert.match(out, /DB\s+⚠️\s+`.+` reported drift \(nonzero exit\): 3 pending migrations/);
+    assert.match(out, /DB\s+⚠️\s+`.+` reported drift \(exit 1\): 3 pending migrations/);
     assert.doesNotMatch(out, /: > /); // must skip npm's own "> driftcheck:db" echo line
   } finally { cleanup(dir); }
 });
@@ -143,6 +176,19 @@ test('a "driftcheck:db" script surfaces up to 3 lines of real detail, not just t
     }));
     const out = runRepoCheck([dir]);
     assert.match(out, /: line one \| line two \| line three …$/m);
+  } finally { cleanup(dir); }
+});
+
+test('a "driftcheck:db" script exiting with anything other than 0 or 1 is inconclusive, not drift', () => {
+  const dir = makeTempDir();
+  try {
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({
+      name: 'x',
+      scripts: { 'driftcheck:db': 'node -e "console.error(\'ECONNREFUSED\'); process.exit(17)"' },
+    }));
+    const out = runRepoCheck([dir]);
+    assert.match(out, /DB\s+\?\?\s+`.+` exited 17 \(not the 0=clean\/1=drift convention\) — inconclusive: ECONNREFUSED/);
+    assert.doesNotMatch(out, /DB\s+⚠️/);
   } finally { cleanup(dir); }
 });
 
@@ -176,6 +222,63 @@ test('--tests with no "test" script in package.json skips cleanly', () => {
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'x' }));
     const out = runRepoCheck([dir, '--tests']);
     assert.match(out, /TESTS\s+\?\?\s+no "test" script/);
+  } finally { cleanup(dir); }
+});
+
+// Fakes a whole Vitest project by hand: a "test" script that reports one
+// failing file, plus a `node_modules/vitest` with a real, invokable bin
+// entry (matching vitest's own package.json "bin" shape) so the
+// isolation re-run resolves and runs it directly via `node <entry>` —
+// exactly what src/repo.mjs's resolveVitestBin()/shArgs() path does in
+// production, no real Vitest install needed to exercise it.
+function setupFlakeFixture(dir, isolationBehavior) {
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({
+    name: 'x',
+    scripts: { test: 'node run-vitest-fake.cjs' },
+  }));
+  writeFileSync(join(dir, 'run-vitest-fake.cjs'),
+    "console.log('FAIL  src/foo.test.mjs > widget does the thing');\n" +
+    "console.log('Tests  1 failed (1)');\n" +
+    'process.exit(1);\n');
+
+  mkdirSync(join(dir, 'node_modules', 'vitest'), { recursive: true });
+  writeFileSync(join(dir, 'node_modules', 'vitest', 'package.json'),
+    JSON.stringify({ name: 'vitest', bin: { vitest: './entry.cjs' } }));
+
+  const entries = {
+    crash: 'process.exit(2);\n',
+    clean: "console.log('Tests  1 passed (1)');\nprocess.exit(0);\n",
+    real: "console.log('FAIL  src/foo.test.mjs > widget does the thing');\nprocess.exit(1);\n",
+  };
+  writeFileSync(join(dir, 'node_modules', 'vitest', 'entry.cjs'), entries[isolationBehavior]);
+}
+
+test('an isolation re-run that crashes (nonzero exit, no matching FAIL line) is inconclusive, not FLAKY', () => {
+  const dir = makeTempDir();
+  try {
+    setupFlakeFixture(dir, 'crash');
+    const out = runRepoCheck([dir, '--tests']);
+    assert.match(out, /TESTS\s+\?\?\s+isolation re-run of src\/foo\.test\.mjs did not complete cleanly \(exit 2, no matching FAIL line\)/);
+    assert.doesNotMatch(out, /FLAKY/);
+  } finally { cleanup(dir); }
+});
+
+test('an isolation re-run that passes cleanly reports FLAKY without claiming it is not a regression', () => {
+  const dir = makeTempDir();
+  try {
+    setupFlakeFixture(dir, 'clean');
+    const out = runRepoCheck([dir, '--tests']);
+    assert.match(out, /TESTS\s+OK\*.*did not reproduce in isolation/);
+    assert.doesNotMatch(out, /Not a regression/);
+  } finally { cleanup(dir); }
+});
+
+test('an isolation re-run that fails again reports a REAL failure, invoking vitest directly with no shell', () => {
+  const dir = makeTempDir();
+  try {
+    setupFlakeFixture(dir, 'real');
+    const out = runRepoCheck([dir, '--tests']);
+    assert.match(out, /TESTS\s+❌\s+REAL failures in: src\/foo\.test\.mjs \(fail even in isolation\)/);
   } finally { cleanup(dir); }
 });
 

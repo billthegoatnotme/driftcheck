@@ -17,8 +17,8 @@
 // ─────────────────────────────────────────────────────────────────────
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { join, resolve } from 'node:path';
-import { sh } from './lib/shell.mjs';
+import { join, relative, resolve } from 'node:path';
+import { sh, shArgs } from './lib/shell.mjs';
 import { logHistory } from './lib/history.mjs';
 
 // Matches driftcheck's own generated stubs (.test.js/.mjs) as well as
@@ -40,6 +40,22 @@ export function parseVitestSummary(out) {
   if (!total) return null;
   const passed = line[1].match(/(\d+)\s+passed/);
   return { total: Number(total[1]), passed: passed ? Number(passed[1]) : 0 };
+}
+
+// Resolves vitest's own bin entry (e.g. "./vitest.mjs") from the target
+// repo's node_modules, so the isolation re-run below can invoke it
+// directly via `node <entry>` — a real executable, sidestepping the
+// shell entirely. Returns null when it can't be found locally (a
+// hoisted monorepo layout, say), in which case the caller falls back
+// to the old `npx` invocation rather than failing outright.
+function resolveVitestBin(repo) {
+  const pkgPath = join(repo, 'node_modules', 'vitest', 'package.json');
+  if (!existsSync(pkgPath)) return null;
+  try {
+    const bin = JSON.parse(readFileSync(pkgPath, 'utf8')).bin;
+    const entry = typeof bin === 'string' ? bin : bin?.vitest;
+    return entry ? join(repo, 'node_modules', 'vitest', entry) : null;
+  } catch { return null; }
 }
 
 export function runRepoCheck(args) {
@@ -67,7 +83,13 @@ export function runRepoCheck(args) {
       const head = headR.ok ? headR.out.trim() : null;
       const originR = sh(repo, 'git rev-parse --short origin/main');
       const originMain = originR.ok ? originR.out.trim() : null;
-      const dirty = sh(repo, 'git status --porcelain').out.split('\n').filter(Boolean);
+      // .driftcheck/ is this tool's own artifact (the history log written
+      // in step 6, below), not repo state worth reporting on — excluded
+      // here the same as if it were always gitignored, so a repo that
+      // doesn't gitignore it can't have this same run report "tree
+      // clean" and then make the tree dirty before it finishes.
+      const dirty = sh(repo, 'git status --porcelain').out.split('\n').filter(Boolean)
+        .filter((l) => l.slice(3) !== '.driftcheck/' && !l.slice(3).startsWith('.driftcheck/'));
 
       if (!branch || !originMain) {
         say(`GIT      ??  ${!branch ? 'no commits yet' : 'no origin/main to compare against'}` +
@@ -107,7 +129,7 @@ export function runRepoCheck(args) {
               for (const b of unmerged) {
                 const pr = prs.find((p) => p.headRefName === b && p.state !== 'OPEN');
                 if (!pr) continue;
-                const ahead = sh(repo, `git rev-list --count origin/main..${b}`).out.trim();
+                const ahead = shArgs(repo, 'git', ['rev-list', '--count', `origin/main..${b}`]).out.trim();
                 say(`         ⚠️  branch '${b}' has ${ahead} commit(s) not in origin/main, but PR #${pr.number} is already ${pr.state} — likely pushed after merge, not included`);
               }
             } catch { say('         ??  could not parse gh output for unmerged-branch check'); }
@@ -152,7 +174,10 @@ export function runRepoCheck(args) {
     if (customDbCmd) {
       // No ORM-specific parsing here on purpose — a project's own
       // "driftcheck:db" script can wrap Drizzle, TypeORM, Sequelize,
-      // Knex, or anything else; exit 0 means no drift, by convention.
+      // Knex, or anything else. Convention: exit 0 = clean, exit 1 =
+      // drift found, anything else (unreachable DB, missing command,
+      // a script bug, a timeout) is inconclusive, not drift — none of
+      // those mean the same thing as "drift found."
       const r = sh(repo, 'npm run driftcheck:db', { timeout: 90_000 });
       // Skip npm's own "> driftcheck:db" / "> <command>" echo lines to
       // surface what the script itself actually produced. Up to 3
@@ -161,10 +186,14 @@ export function runRepoCheck(args) {
       // its own header.
       const realLines = r.out.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('>'));
       const detail = realLines.slice(0, 3).join(' | ') + (realLines.length > 3 ? ' …' : '');
-      say(r.ok
-        ? `DB       OK  \`${customDbCmd}\` reports no drift`
-        : `DB       ⚠️  \`${customDbCmd}\` reported drift (nonzero exit): ${detail || '(no output)'}`);
-      record.db = { custom: true, ok: r.ok };
+      if (r.code === 0) {
+        say(`DB       OK  \`${customDbCmd}\` reports no drift`);
+      } else if (r.code === 1) {
+        say(`DB       ⚠️  \`${customDbCmd}\` reported drift (exit 1): ${detail || '(no output)'}`);
+      } else {
+        say(`DB       ??  \`${customDbCmd}\` exited ${r.code ?? 'unknown'} (not the 0=clean/1=drift convention) — inconclusive: ${detail || '(no output)'}`);
+      }
+      record.db = { custom: true, code: r.code };
     } else {
       const schemaPath = join(repo, 'prisma', 'schema.prisma');
       if (!existsSync(schemaPath)) {
@@ -219,18 +248,28 @@ export function runRepoCheck(args) {
           [...run.out.matchAll(VITEST_FAIL_FILE_RE)].map((m) => m[1]),
         )];
         if (failedFiles.length) {
-          const iso = sh(repo, `npx vitest run ${failedFiles.join(' ')}`, { timeout: 300_000 });
+          const vitestBin = resolveVitestBin(repo);
+          const iso = vitestBin
+            ? shArgs(repo, process.execPath, [vitestBin, 'run', ...failedFiles], { timeout: 300_000 })
+            : sh(repo, `npx vitest run ${failedFiles.join(' ')}`, { timeout: 300_000 });
           const isoFailed = [...new Set(
             [...iso.out.matchAll(VITEST_FAIL_FILE_RE)].map((m) => m[1]),
           )];
           const flaky = failedFiles.filter((f) => !isoFailed.includes(f));
-          if (isoFailed.length === 0) {
-            say(`TESTS    OK* ${summary ? `${summary.passed}/${summary.total}` : 'suite'} — ${flaky.length} FLAKY file(s) under full-suite load, ALL pass in isolation: ${flaky.join(', ')}. Not a regression; known machine-load class.`);
+          if (isoFailed.length === 0 && !iso.ok) {
+            // The isolation run itself didn't complete cleanly (crash,
+            // config error, timeout) — an empty isoFailed here means
+            // "we don't actually know," not "it passed."
+            say(`TESTS    ??  isolation re-run of ${failedFiles.join(', ')} did not complete cleanly (exit ${iso.code ?? 'unknown'}, no matching FAIL line) — could not classify flaky vs. real`);
+            record.tests = { passed: summary?.passed ?? null, total: summary?.total ?? null, real: [], flaky: [] };
+          } else if (isoFailed.length === 0) {
+            say(`TESTS    OK* ${summary ? `${summary.passed}/${summary.total}` : 'suite'} — ${flaky.length} FLAKY file(s) under full-suite load, did not reproduce in isolation: ${flaky.join(', ')}. Known machine-load class, but one clean isolation run isn't proof it's not a regression — could still be test order, shared state, a race, or resource contention.`);
+            record.tests = { passed: summary?.passed ?? null, total: summary?.total ?? null, real: [], flaky };
           } else {
             say(`TESTS    ❌  REAL failures in: ${isoFailed.join(', ')} (fail even in isolation)` +
                 (flaky.length ? ` | plus flaky: ${flaky.join(', ')}` : ''));
+            record.tests = { passed: summary?.passed ?? null, total: summary?.total ?? null, real: isoFailed, flaky };
           }
-          record.tests = { passed: summary?.passed ?? null, total: summary?.total ?? null, real: isoFailed, flaky };
         } else {
           say(`TESTS    ❌  suite did not produce a summary — first error line: ${run.out.split('\n').find((l) => /error/i.test(l)) ?? '(none found)'}`);
         }
@@ -265,7 +304,11 @@ export function runRepoCheck(args) {
           `${delta !== 0 ? ` (${delta > 0 ? '+' : ''}${delta})` : ''} since ${prev.at.slice(0, 10)}` +
           `${record.tests.flaky?.length ? ` | flaky today: ${record.tests.flaky.length}` : ''}`);
     } else {
-      say(`NOTES    run #${record.runIndex} logged → ${HISTORY}`);
+      // Repo-relative, not the raw absolute HISTORY path — this output
+      // gets embedded verbatim into committed spec files by `driftcheck
+      // spec`, and an absolute path there leaks local username/folder
+      // structure into what may be a public document.
+      say(`NOTES    run #${record.runIndex} logged → ${relative(repo, HISTORY).split('\\').join('/')}`);
     }
   }
 
