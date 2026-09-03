@@ -119,6 +119,37 @@ test('close reports plainly, not silently, if a section marker is missing to pat
   } finally { cleanup(dir); }
 });
 
+// Regression coverage: the top-level verdict used to always read "SPEC
+// OK checkpointed" even when a patch step above genuinely failed and
+// got reported as a "??" sub-note — a false-clean headline for anyone
+// who only reads the first line.
+test('close marks the top-level verdict as partial when a patch step fails, not a plain OK', () => {
+  const dir = makeTempDir();
+  try {
+    const name = basename(dir);
+    runSpecCommand([dir]);
+    const v1Path = join(dir, `${name}_spec_v0_01.md`);
+    const mangled = readFileSync(v1Path, 'utf8').replace('## Checkpoint Log', '## Renamed Section');
+    writeFileSync(v1Path, mangled);
+
+    const out = runSpecCommand(['close', dir]);
+    const verdictLine = out.split('\n').find((l) => l.startsWith('SPEC'));
+    assert.match(verdictLine, /^SPEC\s+⚠️\s+checkpointed \(partial\)/);
+    assert.doesNotMatch(verdictLine, /^SPEC\s+OK/);
+  } finally { cleanup(dir); }
+});
+
+test('close keeps a plain OK verdict when every patch step succeeds', () => {
+  const dir = makeTempDir();
+  try {
+    runSpecCommand([dir]);
+    const out = runSpecCommand(['close', dir]);
+    const verdictLine = out.split('\n').find((l) => l.startsWith('SPEC'));
+    assert.match(verdictLine, /^SPEC\s+OK\s+checkpointed →/);
+    assert.doesNotMatch(verdictLine, /partial/);
+  } finally { cleanup(dir); }
+});
+
 test('close with no existing spec errors cleanly instead of guessing', () => {
   const dir = makeTempDir();
   try {
