@@ -198,6 +198,5 @@ export function runRepoCheck(args) {
     }
   }
 
-  console.log('── driftcheck repo ─ ' + repo);
-  console.log(lines.join('\n'));
+  return '── driftcheck repo ─ ' + repo + '\n' + lines.join('\n');
 }

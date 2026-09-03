@@ -1,16 +1,20 @@
 # driftcheck
 
-A truth instrument for two kinds of drift: repo *state* that's moved
-since you last checked it, and reference *documentation* that no longer
-describes the code it names.
+A truth instrument for three kinds of drift: repo *state* that's moved
+since you last checked it, reference *documentation* that no longer
+describes the code it names, and *continuity* — whether a new working
+thread has what it needs to pick up cleanly, or loses everything the
+last one learned.
 
-Both failure modes have the same shape — a claim was true once, and
-nobody told it that it stopped being true. `driftcheck` exists to catch
-that before you act on it.
+All three failure modes have the same shape — a claim was true once,
+and nobody told it that it stopped being true. `driftcheck` exists to
+catch that before you act on it.
 
 ```
 driftcheck repo [path] [--tests] [--build]
 driftcheck docs [path] [--file <path>]...
+driftcheck spec [path]
+driftcheck spec close [path]
 ```
 
 ## Why
@@ -109,6 +113,38 @@ check and say so plainly, rather than guess.
 
 Every run appends a line to `<repo>/.driftcheck/docs-history.jsonl`.
 
+## `driftcheck spec`
+
+Scaffolds a versioned project spec — a fixed governance document (how
+AI and human collaborators work together on this repo) plus a "What
+We're Building" section populated from a live `driftcheck repo`/`docs`
+scan, and a Checkpoint Log for tracking what happened over time:
+
+```bash
+driftcheck spec              # creates <repo>_spec_v0_01.md — no-op if one already exists
+driftcheck spec close        # checkpoints forward: writes v0_0N + a paired thread-handoff doc
+```
+
+`driftcheck spec` is idempotent — safe to run any time, it only ever
+creates the file once. `driftcheck spec close` is deliberate: it writes
+the next `<repo>_spec_v0_0N.md` (state re-scanned, prior Checkpoint Log
+entries carried forward, a new entry stubbed in) and a
+`<repo>_thread_handoff_v0_0N.md` meant to be pasted at the start of the
+next working thread.
+
+The reflective sections — the current checkpoint's "what happened," the
+handoff's "what to do next" — are left as explicit prompts, not
+auto-written. Narrating a working session is a language-generation
+task, not a verification one; a deterministic script guessing at *why*
+something happened is exactly the kind of unearned confidence this
+tool exists to avoid elsewhere. Fill those in yourself, or have your AI
+collaborator do it before closing out — the same way this project's
+own spec and handoff docs were actually written.
+
+`<repo>` in the generated filenames is the target's own name (from
+`package.json`'s `name` field, falling back to the directory name), not
+a literal string.
+
 ## Verdict legend
 
 | Mark | Meaning |
@@ -132,6 +168,14 @@ Every run appends a line to `<repo>/.driftcheck/docs-history.jsonl`.
 - The "moved/renamed?" search in `driftcheck docs` walks the repo tree
   directly and does not honor `.gitignore` — it skips common build/
   dependency directories by name instead.
+- `driftcheck spec`'s Pipeline Architecture table ships as a fill-in
+  placeholder, not auto-detected roles — it's a governance template,
+  not something inferable from repo state.
+- `driftcheck spec close` only carries the Checkpoint Log forward
+  automatically; every other section (including "Purpose") regenerates
+  fresh each version rather than merging in prior hand-edits. Older
+  spec files stay on disk unchanged, so nothing is lost — it's just not
+  copied forward for you.
 
 ## Support
 

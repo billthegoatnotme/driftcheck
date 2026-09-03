@@ -90,14 +90,14 @@ export function runDocsCheck(args) {
   const candidates = fileFlags.length ? fileFlags : DEFAULT_CANDIDATES;
   const targets = candidates.filter((f) => existsSync(join(repo, f)));
 
-  console.log('── driftcheck docs ─ ' + repo);
+  const out = ['── driftcheck docs ─ ' + repo];
 
   if (targets.length === 0) {
     const looked = fileFlags.length
       ? fileFlags.join(', ')
       : `${DEFAULT_CANDIDATES.join(', ')} (defaults)`;
-    console.log(`DOCS     ??  no target document found — looked for: ${looked}. Specify one with --file <path>`);
-    return;
+    out.push(`DOCS     ??  no target document found — looked for: ${looked}. Specify one with --file <path>`);
+    return out.join('\n');
   }
 
   const multi = targets.length > 1;
@@ -151,15 +151,17 @@ export function runDocsCheck(args) {
   }
 
   if (!multi) {
-    console.log(lines.join('\n'));
+    out.push(lines.join('\n'));
   } else {
-    console.log(`DOCS     ${totalDrift === 0 ? 'OK ' : '⚠️ '} ${targets.length} document(s), ${totalChecked} reference(s) checked, ${totalDrift} drifted`);
-    console.log(lines.join('\n'));
+    out.push(`DOCS     ${totalDrift === 0 ? 'OK ' : '⚠️ '} ${targets.length} document(s), ${totalChecked} reference(s) checked, ${totalDrift} drifted`);
+    out.push(lines.join('\n'));
   }
 
   const record = { at: new Date().toISOString(), repo, targets, totalChecked, totalDrift };
   const prev = logHistory(HISTORY, record);
-  console.log(prev
+  out.push(prev
     ? `NOTES     run #${record.runIndex} | ${prev.totalChecked}→${totalChecked} references since ${prev.at.slice(0, 10)}`
     : `NOTES     run #${record.runIndex} logged → ${HISTORY}`);
+
+  return out.join('\n');
 }
