@@ -322,7 +322,7 @@ to it.
 
 ## Author
 
-Built by [The Artchitect](https://github.com/billthegoatnotme).
+Built by [The Artchitect](https://github.com/billthegoatnotme). hand written - disclaimer: I directed how this got built and verified the results, the actual implementation happened through real back-and-forth with Claude, not word-for-word dictation. The tool itself has zero AI dependency at runtime; I checked. AI made the building faster and more disciplined. It didn't do the thinking for me. I hope that clears up some of the confusion i'm seeing. i don't want to obfuscate the truth.
 
 ## License
 
