@@ -6,6 +6,9 @@
   "bin": {
     "driftcheck": "./bin/driftcheck.mjs"
   },
+  "scripts": {
+    "test": "node --test"
+  },
   "files": [
     "bin",
     "src",
