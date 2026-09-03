@@ -24,7 +24,7 @@
 // ─────────────────────────────────────────────────────────────────────
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { logHistory } from './lib/history.mjs';
 
 const SRC_EXT = 'ts|tsx|js|jsx|mjs|cjs|sql|prisma|md';
@@ -39,6 +39,50 @@ const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.next', 'ou
 const pathRe = new RegExp(`^[\\w.-]+(?:/[\\w.-]+)+\\.(${SRC_EXT})$`);
 const arrowRe = new RegExp(`^([\\w./-]+\\.(${SRC_EXT}))\\s*(?:→|->)\\s*([A-Za-z_$][\\w$]*)\\(?\\)?$`);
 const declRe = (fn) => new RegExp(`\\b(?:export\\s+)?(?:default\\s+)?(?:async\\s+)?(?:function|const|let|class)\\s+${fn}\\b`);
+
+// Strips '//' line comments, '/* */' block comments, and the contents
+// of quoted strings ('/"/`) before declRe() runs against a file's
+// content — a plain substring match otherwise can't tell `// function
+// doThing() was removed` or `const note = "function doThing()"` from
+// an actual declaration, which is a false *negative*: the tool reports
+// a removed function as still present. Not a full parser — a template
+// literal with an embedded ${...} expression, a regex literal
+// containing "//", and similar edge cases still aren't handled — but
+// this closes the reproducible case above without inventing a real
+// JS/TS tokenizer for a tool whose checks are deliberately narrow.
+function stripCommentsAndStrings(content) {
+  let out = '';
+  for (let i = 0; i < content.length; i++) {
+    const c = content[i];
+    if (c === '/' && content[i + 1] === '/') {
+      while (i < content.length && content[i] !== '\n') i++;
+      out += '\n';
+      continue;
+    }
+    if (c === '/' && content[i + 1] === '*') {
+      i += 2;
+      while (i < content.length && !(content[i] === '*' && content[i + 1] === '/')) {
+        out += content[i] === '\n' ? '\n' : ' ';
+        i++;
+      }
+      i++; // skip the '*'; the for-loop's own i++ skips the '/'
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') {
+      const quote = c;
+      i++;
+      while (i < content.length && content[i] !== quote) {
+        out += content[i] === '\n' ? '\n' : ' ';
+        if (content[i] === '\\') i++; // skip the escaped character too
+        i++;
+      }
+      out += ' ';
+      continue;
+    }
+    out += c;
+  }
+  return out;
+}
 
 // Simple top-level directory names from the repo's own .gitignore, on
 // top of the hardcoded SKIP_DIRS — not a full gitignore parser.
@@ -71,6 +115,15 @@ function walkFiles(dir, exts, skipDirs, out = []) {
     }
   }
   return out;
+}
+
+// True when `target` (already joined against `repo`) resolves outside
+// the repo root — e.g. a `../other/file.js` bare-path reference, which
+// pathRe's character class doesn't reject since it allows a literal
+// "." and so accepts ".." as an ordinary path segment.
+function escapesRepo(repo, target) {
+  const rel = relative(repo, resolve(target));
+  return rel.startsWith('..') || isAbsolute(rel);
 }
 
 function extractReferences(doc) {
@@ -132,22 +185,31 @@ export function runDocsCheck(args) {
 
     const pathDrift = [];
     for (const p of barePaths) {
-      if (!existsSync(join(repo, p))) pathDrift.push({ ref: p, reason: 'file not found' });
+      const pFull = join(repo, p);
+      if (escapesRepo(repo, pFull)) {
+        pathDrift.push({ ref: p, reason: 'resolves outside the repo root — not checked' });
+      } else if (!existsSync(pFull)) {
+        pathDrift.push({ ref: p, reason: 'file not found' });
+      }
     }
 
     const fnDrift = [];
     for (const { file, fn } of arrowPairs) {
       const fnFull = join(repo, file);
+      if (escapesRepo(repo, fnFull)) {
+        fnDrift.push({ ref: `${file} → ${fn}()`, reason: 'file path resolves outside the repo root — not checked' });
+        continue;
+      }
       if (!existsSync(fnFull)) {
         fnDrift.push({ ref: `${file} → ${fn}()`, reason: 'file not found' });
         continue;
       }
-      const content = readFileSync(fnFull, 'utf8');
+      const content = stripCommentsAndStrings(readFileSync(fnFull, 'utf8'));
       if (declRe(fn).test(content)) continue; // found exactly where the document claims
 
       const elsewhere = walkFiles(repo, CODE_EXT, skipDirs).find((f) => {
         if (f === fnFull) return false;
-        try { return declRe(fn).test(readFileSync(f, 'utf8')); } catch { return false; }
+        try { return declRe(fn).test(stripCommentsAndStrings(readFileSync(f, 'utf8'))); } catch { return false; }
       });
       fnDrift.push(elsewhere
         ? { ref: `${file} → ${fn}()`, reason: `not in that file — found in ${relative(repo, elsewhere).split('\\').join('/')} instead (moved/renamed?)` }
@@ -181,7 +243,11 @@ export function runDocsCheck(args) {
   const prev = logHistory(HISTORY, record);
   out.push(prev
     ? `NOTES     run #${record.runIndex} | ${prev.totalChecked}→${totalChecked} references since ${prev.at.slice(0, 10)}`
-    : `NOTES     run #${record.runIndex} logged → ${HISTORY}`);
+    // Repo-relative, not the raw absolute HISTORY path — this output
+    // gets embedded verbatim into committed spec files by `driftcheck
+    // spec`, and an absolute path there leaks local username/folder
+    // structure into what may be a public document.
+    : `NOTES     run #${record.runIndex} logged → ${relative(repo, HISTORY).split('\\').join('/')}`);
 
   return out.join('\n');
 }
