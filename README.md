@@ -15,6 +15,7 @@ driftcheck repo [path] [--tests] [--build]
 driftcheck docs [path] [--file <path>]...
 driftcheck spec [path]
 driftcheck spec close [path]
+driftcheck vitest [path] [--file <path>]...
 ```
 
 ## Why
@@ -161,6 +162,40 @@ which the Checkpoint Log's carried-forward entries capture. The output
 line reports what got archived, since moving files silently would cut
 against driftcheck's own verdict-first stance everywhere else.
 
+## `driftcheck vitest`
+
+Not a fourth drift check — a scaffolding companion. Wires up Vitest for
+a project that doesn't have it yet, and optionally generates stub test
+files:
+
+```bash
+driftcheck vitest                        # config + scripts.test, no stub files
+driftcheck vitest --file src/lib.js      # + a stub test file for that source file
+```
+
+Creates `vitest.config.mjs` if no Vitest or Vite config already exists
+(a `vite.config.*` with its own `test: {...}` block counts), and adds
+`"test": "vitest run"` to `package.json` if `scripts.test` isn't already
+set — both idempotent, both leave anything already there alone rather
+than overwriting it.
+
+`--file <path>` (repeatable) additionally scaffolds `<file>.test.<ext>`
+next to that source file — one `describe`/`test()` stub per exported
+`function`/`class`/`const`/`let` found via the same precise,
+un-guessed pattern matching `driftcheck docs` already uses (`export`
+lists and re-exports aren't extracted, for the same reason). Never
+overwrites an existing test file.
+
+**It does not write real assertions, on purpose.** Every stub throws
+immediately with a "not yet implemented" message — deciding what
+correct behavior looks like requires actually understanding the code,
+which is a reasoning task, not something this tool should guess at.
+Guessing here would manufacture false confidence, the exact failure
+`driftcheck docs` and `driftcheck repo` both exist to catch elsewhere.
+The stubs are a real, verified starting point — install Vitest and run
+them and they genuinely fail — meant for a human or an AI collaborator
+to fill in with real assertions, not something to leave as-is.
+
 ## Verdict legend
 
 | Mark | Meaning |
@@ -194,6 +229,13 @@ against driftcheck's own verdict-first stance everywhere else.
   fresh each version rather than merging in prior hand-edits. Older
   spec files stay on disk unchanged, so nothing is lost — it's just not
   copied forward for you.
+- `driftcheck vitest`'s export detection uses the same precise, narrow
+  patterns `driftcheck docs` uses for declarations — `export function`/
+  `class`/`const`/`let NAME`. `export { a, b }` lists and re-exports
+  aren't extracted; a source file that only uses those reports nothing
+  to stub rather than guessing.
+- `driftcheck vitest --file` scaffolds one file at a time, on purpose —
+  it never scans and stubs an entire repo unprompted.
 
 ## Support
 
