@@ -32,6 +32,63 @@ test('a git repo with no origin/main degrades cleanly', () => {
   } finally { cleanup(dir); }
 });
 
+// Sets up a real "origin" as a local bare repo (so ancestor-of-origin
+// checks use genuine git plumbing) with a real feature branch pushed
+// nowhere, plus a fake `gh` on PATH reporting a specific PR list — the
+// only piece that actually needs mocking.
+function withOrphanedBranchRepo(prBodyLines, testFn) {
+  const dir = makeTempDir();
+  const originDir = makeTempDir();
+  const ghDir = makeTempDir();
+  const origPath = process.env.PATH;
+  try {
+    git(originDir, ['init', '-q', '--bare']);
+    git(dir, ['init', '-q']);
+    git(dir, ['config', 'user.email', 't@example.com']);
+    git(dir, ['config', 'user.name', 'Test']);
+    git(dir, ['remote', 'add', 'origin', originDir]);
+    writeFileSync(join(dir, 'a.txt'), 'hi\n');
+    git(dir, ['add', '-A']);
+    git(dir, ['commit', '-q', '-m', 'init']);
+    git(dir, ['push', '-q', 'origin', 'HEAD:main']);
+    git(dir, ['fetch', '-q', 'origin']);
+
+    git(dir, ['checkout', '-q', '-b', 'feat/orphaned']);
+    writeFileSync(join(dir, 'b.txt'), 'new\n');
+    git(dir, ['add', '-A']);
+    git(dir, ['commit', '-q', '-m', 'orphaned work']);
+    git(dir, ['checkout', '-q', 'main']);
+
+    writeFileSync(join(ghDir, 'gh.cmd'), `@echo off\r\necho ${prBodyLines}\r\n`);
+    process.env.PATH = `${ghDir};${origPath}`;
+
+    testFn(dir);
+  } finally {
+    process.env.PATH = origPath;
+    cleanup(dir); cleanup(originDir); cleanup(ghDir);
+  }
+}
+
+test('flags a local branch with unmerged commits behind an already-merged PR', () => {
+  withOrphanedBranchRepo(
+    JSON.stringify([{ number: 7, state: 'MERGED', headRefName: 'feat/orphaned' }]),
+    (dir) => {
+      const out = runRepoCheck([dir]);
+      assert.match(out, /branch 'feat\/orphaned' has 1 commit\(s\) not in origin\/main, but PR #7 is already MERGED — likely pushed after merge, not included/);
+    },
+  );
+});
+
+test('does not flag a local branch whose PR is still open', () => {
+  withOrphanedBranchRepo(
+    JSON.stringify([{ number: 7, state: 'OPEN', headRefName: 'feat/orphaned' }]),
+    (dir) => {
+      const out = runRepoCheck([dir]);
+      assert.doesNotMatch(out, /likely pushed after merge/);
+    },
+  );
+});
+
 test('no prisma/schema.prisma skips the DB check cleanly', () => {
   const dir = makeTempDir();
   try {
