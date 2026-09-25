@@ -325,3 +325,29 @@ test('VITEST_FAIL_FILE_RE still matches .test.tsx for TypeScript projects', () =
   const matches = [...out.matchAll(VITEST_FAIL_FILE_RE)].map((m) => m[1]);
   assert.deepEqual(matches, ['src/components/Button.test.tsx']);
 });
+
+test('flags spec/handoff files outside agendas/ that git would publish, but not ignored or example ones', () => {
+  const dir = makeTempDir();
+  const originDir = makeTempDir();
+  try {
+    git(originDir, ['init', '-q', '--bare']);
+    git(dir, ['init', '-q']);
+    git(dir, ['config', 'user.email', 't@example.com']);
+    git(dir, ['config', 'user.name', 'Test']);
+    git(dir, ['remote', 'add', 'origin', originDir]);
+    writeFileSync(join(dir, '.gitignore'), '/agendas/\n');
+    git(dir, ['add', '-A']);
+    git(dir, ['commit', '-q', '-m', 'init']);
+    git(dir, ['push', '-q', 'origin', 'HEAD:main']);
+
+    mkdirSync(join(dir, 'agendas'));
+    writeFileSync(join(dir, 'agendas', 'x_spec_v0_02.md'), 'private');
+    mkdirSync(join(dir, 'examples'));
+    writeFileSync(join(dir, 'examples', 'x_spec_v0_01.md'), 'sample');
+    writeFileSync(join(dir, 'x_thread_handoff_v0_02.md'), 'copied up to paste');
+
+    const out = runRepoCheck([dir]);
+    assert.match(out, /⚠️\s+checkpoint file\(s\) outside agendas\/ and not gitignored: x_thread_handoff_v0_02\.md —/);
+    assert.doesNotMatch(out, /not gitignored:.*(examples|agendas)\//);
+  } finally { cleanup(dir); cleanup(originDir); }
+});

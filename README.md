@@ -64,7 +64,10 @@ driftcheck repo /path/to/other/repo --tests --build
   shows `MERGED`/`CLOSED` on GitHub (work pushed after the merge
   happened, invisible to both the sync check above and the PRS check
   below — see the note after this list), and any agent worktrees under
-  `.claude/worktrees` that can silently pollute test or build globs.
+  `.claude/worktrees` that can silently pollute test or build globs,
+  and any spec or handoff file outside the gitignored `agendas/` that
+  git would commit (say, a handoff copied up to the root to paste
+  somewhere).
 - **PRS** — open pull requests via the `gh` CLI. If a PR you believed
   was merged still shows up here, it isn't merged yet.
 - **DB** — checks a `"driftcheck:db"` script in the target's
@@ -151,9 +154,12 @@ Building" section populated from a live `driftcheck repo`/`docs` scan,
 and a Checkpoint Log for tracking what happened over time:
 
 ```bash
-driftcheck spec              # creates <repo>_spec_v0_01.md — no-op if one already exists
+driftcheck spec              # creates agendas/<repo>_spec_v0_01.md — no-op if one already exists
 driftcheck spec close        # checkpoints forward: writes v0_0N + a paired thread-handoff doc
 ```
+
+Everything `spec` writes lives in one folder, `agendas/` — see
+[Agendas](#agendas) below for the layout, plans, and privacy.
 
 `driftcheck spec` is idempotent — safe to run any time, it only ever
 creates the file once. `driftcheck spec close` is deliberate: it writes
@@ -177,9 +183,9 @@ the *next* working session so it doesn't start cold. It points back at
 the spec's latest Checkpoint Log entry rather than repeating it, and
 carries only what a fresh session actually needs — what to do next, and
 any open questions left deliberately unresolved rather than
-re-litigated. `driftcheck_spec_v0_01.md` in this repo's own root is a
-live example, not a fixture — this project uses `driftcheck spec` on
-itself.
+re-litigated. This project uses `driftcheck spec` on itself, privately,
+in its own gitignored `agendas/`; [`examples/agendas/`](examples/agendas/)
+is a public, made-up sample of what a filled-in checkpoint looks like.
 
 `<repo>` in the generated filenames is the target's own name (from
 `package.json`'s `name` field, falling back to the directory name), not
@@ -205,19 +211,71 @@ drives the filename comes from `package.json`'s `name` field, and if
 that field changes (or the file disappears) between runs, the detected
 name changes too — silently starting a second, orphaned version
 sequence under the new name instead of continuing the first. Both
-commands scan root for any other `*_spec_v0_NN.md` under a different
+commands scan `agendas/` and the repo root for any other `*_spec_v0_NN.md` under a different
 name on every run and report it, rather than letting that happen
 quietly. Nothing is lost either way — it's just easy to miss without
 the warning.
 
-Each `close` also archives whatever it just superseded — every older
-`<repo>_spec_v0_NN.md` moves into `<repo>_spec_previous/`, and every
-older handoff into `<repo>_thread_handoff_previous/`, so the repo root
-always shows exactly one current spec and one current handoff no matter
-how many checkpoints have happened. Nothing is ever deleted, only
-moved. The output line reports what got archived, since moving files
-silently would cut against driftcheck's own verdict-first stance
-everywhere else.
+### Agendas
+
+`agendas/` is where continuity lives — the current checkpoint, the plans
+made on the way to the next one, and everything that came before:
+
+```
+agendas/
+  <repo>_spec_v0_NN.md              the current spec
+  <repo>_thread_handoff_v0_NN.md    the current handoff
+  planning/                         plans for the next checkpoint
+  previous/
+    <repo>_spec_previous/
+    <repo>_thread_handoff_previous/
+    <repo>_plan_previous/
+```
+
+Only the current spec and handoff ever sit loose in `agendas/`, so
+there's never a question of which one is live. `spec`/`spec close` warn
+about anything else found there, without moving it.
+
+**Plans.** Mid-work plans — the ones a thread produces for the *next*
+checkpoint to address — go in `agendas/planning/`, named
+`<repo>_<plan_name>.<ext>`. Any file type works: markdown, a PDF, a
+sketch, a spreadsheet. driftcheck doesn't template them or track their
+status. At `spec close`, the new handoff lists every plan from the
+cycle, oldest first, each with its last-edited date written in as plain
+text (file timestamps don't survive copying, syncing, or being pasted
+into a new thread; that line does). Then `<repo>_` plans move to
+`previous/<repo>_plan_previous/`, so `planning/` starts each cycle
+empty. Files without the prefix are listed but left where they are —
+driftcheck only moves files it can tell are its own.
+
+**Nothing is overwritten or deleted.** Every older spec, handoff, and
+plan is moved, never removed. If a name is already taken in an archive
+folder, the newcomer gets `_2`, `_3`, … before its extension and the
+original keeps its plain name. The output line reports everything that
+moved.
+
+**Private by default.** The first `spec` run adds a bare `/agendas/`
+line to `.gitignore` — specs, handoffs, and plans are a working record,
+not necessarily something to publish. Remove that line if you want them
+committed. Because they aren't in git, they aren't in git's history
+either: back `agendas/` up the way you back up anything else local.
+`driftcheck repo` separately warns about any spec or handoff file sitting
+outside `agendas/` where git would pick it up.
+
+**Upgrading.** A repo using the older layout — spec and handoff files
+and their `_previous/` folders in the repo root — is moved into
+`agendas/` automatically on the next `spec` or `spec close`, with each
+move reported. Only driftcheck's own zero-padded filenames move; a
+hand-written look-alike such as `<repo>_spec_v0_1.md` is left alone.
+
+### With or without AI
+
+Agendas are plain files in a predictable place, so they work the same
+for a person as for an AI. Any AI that can run commands in your local
+repo (Claude Code, Codex, Cursor, and the like) can run driftcheck and
+read `agendas/` directly. A chat-only AI can't see a gitignored folder
+through a GitHub connection — paste it the current handoff, which is
+what the handoff is written for.
 
 ## `driftcheck vitest`
 
