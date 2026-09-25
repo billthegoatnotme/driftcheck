@@ -20,10 +20,24 @@
 //  template every time, which silently destroyed any real customization
 //  a team made; that's a real data-loss risk for anyone actually using
 //  this file, not just a naming inconvenience.
+//
+//  Everything lives under agendas/, and only the current spec and
+//  handoff sit loose in it:
+//
+//    agendas/
+//      <repo>_spec_v0_NN.md
+//      <repo>_thread_handoff_v0_NN.md
+//      planning/        mid-work plans, any file type, <repo>_<name>.<ext>
+//      previous/        <repo>_{spec,thread_handoff,plan}_previous/
+//
+//  agendas/ is gitignored by default — these documents are the user's
+//  working record, not necessarily something to publish. driftcheck only
+//  ever moves files carrying the <repo>_ prefix, and never overwrites:
+//  a name clash gets _2, _3, … before the extension.
 // ─────────────────────────────────────────────────────────────────────
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runRepoCheck } from './repo.mjs';
 import { runDocsCheck } from './docs.mjs';
@@ -46,22 +60,102 @@ function repoName(repo) {
 
 const sanitize = (name) => name.replace(/[^A-Za-z0-9_.-]+/g, '-');
 
-const specPath = (repo, name, v) => join(repo, `${name}_spec_v0_${pad2(v)}.md`);
-const handoffPath = (repo, name, v) => join(repo, `${name}_thread_handoff_v0_${pad2(v)}.md`);
+export const AGENDAS = 'agendas';
+const agendasDir = (repo) => join(repo, AGENDAS);
+const planningDir = (repo) => join(repo, AGENDAS, 'planning');
+const previousDir = (repo, name, label) => join(repo, AGENDAS, 'previous', `${name}_${label}_previous`);
+const specPath = (repo, name, v) => join(agendasDir(repo), `${name}_spec_v0_${pad2(v)}.md`);
+const handoffPath = (repo, name, v) => join(agendasDir(repo), `${name}_thread_handoff_v0_${pad2(v)}.md`);
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const listDir = (dir) => (existsSync(dir) ? readdirSync(dir) : []);
+const isDir = (p) => { try { return statSync(p).isDirectory(); } catch { return false; } };
 
-// Finds <name>_<label>_v0_NN.md files sitting in the repo root — never
-// recurses into the _previous/ archive folders, so already-archived
-// versions are never re-processed.
-function findVersioned(repo, name, label) {
+// Moves src into destDir without ever overwriting: if the name is taken,
+// the newcomer becomes name_2.ext, name_3.ext, … and the original keeps
+// its plain name. Returns the name it actually landed under.
+function moveNoClobber(src, destDir) {
+  if (!existsSync(destDir)) mkdirSync(destDir, { recursive: true });
+  const file = basename(src);
+  const ext = isDir(src) ? '' : extname(file);
+  const stem = ext ? file.slice(0, -ext.length) : file;
+  let target = file;
+  for (let n = 2; existsSync(join(destDir, target)); n++) target = `${stem}_${n}${ext}`;
+  renameSync(src, join(destDir, target));
+  return target;
+}
+
+// Finds <name>_<label>_v0_NN.md files sitting loose in agendas/ — never
+// recurses into previous/, so already-archived versions are never
+// re-processed.
+function findVersioned(dir, name, label) {
   const re = new RegExp(`^${escapeRe(name)}_${label}_v0_(\\d+)\\.md$`);
-  return readdirSync(repo)
+  return listDir(dir)
     .map((file) => ({ file, m: file.match(re) }))
     .filter(({ m }) => m)
     .map(({ file, m }) => ({ file, version: Number(m[1]) }));
 }
 
-// Matches ANY <somename>_spec_v0_NN.md in root, regardless of the
+// Moves a pre-agendas layout (spec/handoff files and their _previous/
+// folders loose in the repo root) into agendas/. Scoped to the current
+// name and to driftcheck's own zero-padded version format, so a
+// hand-written look-alike like foo_spec_v0_1.md is never swept up.
+function migrateLegacy(repo, name) {
+  const moved = [];
+  const legacyFile = new RegExp(`^${escapeRe(name)}_(spec|thread_handoff)_v0_\\d{2,}\\.md$`);
+  for (const f of listDir(repo)) {
+    if (legacyFile.test(f) && !isDir(join(repo, f))) {
+      moveNoClobber(join(repo, f), agendasDir(repo));
+      moved.push(f);
+    }
+  }
+  for (const label of ['spec', 'thread_handoff']) {
+    const old = join(repo, `${name}_${label}_previous`);
+    if (!isDir(old)) continue;
+    for (const f of readdirSync(old)) moveNoClobber(join(old, f), previousDir(repo, name, label));
+    if (readdirSync(old).length === 0) rmdirSync(old); // only ever removes a folder that's now empty
+    moved.push(`${name}_${label}_previous/`);
+  }
+  return moved;
+}
+
+// agendas/ holds the user's working record — private unless they choose
+// otherwise. A bare line, no comment: the entry alone says nothing about
+// what's inside.
+function ensureGitignored(repo) {
+  const path = join(repo, '.gitignore');
+  const existing = existsSync(path) ? readFileSync(path, 'utf8') : '';
+  const covered = existing.split(/\r?\n/).map((l) => l.trim())
+    .some((l) => ['agendas', 'agendas/', '/agendas', '/agendas/'].includes(l));
+  if (covered) return false;
+  const sep = existing && !existing.endsWith('\n') ? '\n' : '';
+  // Anchored with a leading slash: a bare agendas/ would also match any
+  // nested folder of that name (e.g. examples/agendas/) anywhere in the repo.
+  writeFileSync(path, `${existing}${sep}/${AGENDAS}/\n`);
+  return true;
+}
+
+// Anything loose in agendas/ besides the current spec + handoff and the
+// two folders — reported, never moved.
+function strayInAgendas(repo, name, version) {
+  const keep = new Set([
+    `${name}_spec_v0_${pad2(version)}.md`,
+    `${name}_thread_handoff_v0_${pad2(version)}.md`,
+    'planning', 'previous',
+  ]);
+  return listDir(agendasDir(repo)).filter((f) => !keep.has(f));
+}
+
+// Every entry in planning/ with its last-edited date. Only <name>_ files
+// are archived at close; others are listed but left where they are.
+function listPlans(repo, name) {
+  return listDir(planningDir(repo)).map((file) => {
+    let mtime = null;
+    try { mtime = statSync(join(planningDir(repo), file)).mtime; } catch { /* vanished */ }
+    return { file, mtime, edited: mtime?.toISOString().slice(0, 10) ?? null, owned: file.startsWith(`${name}_`) };
+  }).sort((a, b) => (a.mtime ?? 0) - (b.mtime ?? 0) || a.file.localeCompare(b.file));
+}
+
+// Matches ANY <somename>_spec_v0_NN.md in agendas/, regardless of the
 // currently detected repo name — not scoped like findVersioned above.
 // Used to catch a real failure mode: repoName() reads package.json's
 // "name" field, so if that field changes (or the file disappears
@@ -70,9 +164,12 @@ function findVersioned(repo, name, label) {
 // version sequence under the new name instead of continuing the first.
 const ANY_SPEC_RE = /^(.+)_spec_v0_\d+\.md$/;
 
+// Checks the repo root too: an orphaned sequence from before agendas/
+// existed is only ever migrated under the current name, so one under an
+// old name stays in root and should still be reported.
 function otherNamedSpecs(repo, currentName) {
   const others = new Set();
-  for (const f of readdirSync(repo)) {
+  for (const f of [...listDir(repo), ...listDir(agendasDir(repo))]) {
     const m = f.match(ANY_SPEC_RE);
     if (m && m[1] !== currentName) others.add(m[1]);
   }
@@ -80,26 +177,32 @@ function otherNamedSpecs(repo, currentName) {
 }
 
 function latestSpecVersion(repo, name) {
-  const versions = findVersioned(repo, name, 'spec').map((v) => v.version);
+  const versions = findVersioned(agendasDir(repo), name, 'spec').map((v) => v.version);
   return versions.length ? Math.max(...versions) : 0;
 }
 
-// Moves every root-level <name>_<label>_v0_NN.md except the one just
-// written into <name>_<label>_previous/ — never deletes, and sweeps any
-// stragglers left over from before this existed, not just the single
+// Moves every loose <name>_<label>_v0_NN.md except the one just written
+// into previous/<name>_<label>_previous/ — never deletes, never
+// overwrites, and sweeps any stragglers, not just the single
 // most-recently-superseded file.
 function archivePrevious(repo, name, label, keepVersion) {
   const moved = [];
-  for (const { file, version } of findVersioned(repo, name, label)) {
+  for (const { file, version } of findVersioned(agendasDir(repo), name, label)) {
     if (version === keepVersion) continue;
-    const dir = join(repo, `${name}_${label}_previous`);
-    const dest = join(dir, file);
-    if (existsSync(dest)) continue; // already archived under this name — leave it alone
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    renameSync(join(repo, file), dest);
+    moveNoClobber(join(agendasDir(repo), file), previousDir(repo, name, label));
     moved.push(file);
   }
   return moved;
+}
+
+// Plans are meant to be addressed by the handoff written at this close,
+// so their cycle ends here: <name>_ entries move to
+// previous/<name>_plan_previous/. Anything without the prefix isn't
+// driftcheck's to move and stays put.
+function archivePlans(repo, name, plans) {
+  for (const p of plans) {
+    if (p.owned) p.archivedAs = moveNoClobber(join(planningDir(repo), p.file), previousDir(repo, name, 'plan'));
+  }
 }
 
 // The governing document driftcheck ships, not data pulled from any
@@ -181,13 +284,33 @@ function patchSpecBody(existingContent, repo, name, newVersion) {
   return { content, notes };
 }
 
-function buildHandoffBody(name, version, prevVersion) {
+// Dates are written in as plain text: file timestamps don't survive a
+// copy, a sync, or a paste into a new thread, but this line does.
+function plansSection(name, plans) {
+  if (!plans.length) return '_No plans were in planning/ this cycle._';
+  return plans.map((p) => {
+    const when = p.edited ? ` — last edited ${p.edited}` : '';
+    const where = p.archivedAs
+      ? ` → ${BT}previous/${name}_plan_previous/${p.archivedAs}${BT}`
+      : ' (still in planning/ — no ' + `${BT}${name}_${BT}` + ' prefix, so not archived)';
+    return `- ${BT}${p.file}${BT}${when}${where}`;
+  }).join('\n');
+}
+
+function buildHandoffBody(name, version, prevVersion, plans) {
   return `# ${name} Thread Handoff — Checkpoint ${version}
 
 Read alongside ${BT}${name}_spec_v0_${pad2(version)}.md${BT} in this
 same folder. This picks up from
 ${BT}${name}_spec_v0_${pad2(prevVersion)}.md${BT} — read that
 checkpoint's entry in the spec's Checkpoint Log before anything else.
+
+## Plans from this cycle
+
+Plans made since the last checkpoint, oldest first. Open only what the
+next step needs.
+
+${plansSection(name, plans)}
 
 ## What the next thread should actually do
 
@@ -206,45 +329,69 @@ export function runSpecCommand(args) {
   const rest = closeMode ? args.slice(1) : args;
   const repo = resolve(rest.find((a) => !a.startsWith('--')) ?? process.cwd());
   const name = sanitize(repoName(repo));
-  const latest = latestSpecVersion(repo, name);
   const header = '── driftcheck spec ─ ' + repo;
 
+  // Setup that's safe to repeat on every run: the folders, a move from
+  // the pre-agendas root layout, and the .gitignore entry.
+  mkdirSync(planningDir(repo), { recursive: true });
+  mkdirSync(join(agendasDir(repo), 'previous'), { recursive: true });
+  const migrated = migrateLegacy(repo, name);
+  const setupLines = [];
+  if (migrated.length) setupLines.push(`         OK  moved ${migrated.length} item(s) from the repo root into ${AGENDAS}/: ${migrated.join(', ')}`);
+
+  const latest = latestSpecVersion(repo, name);
   const driftNames = otherNamedSpecs(repo, name);
   const driftLine = driftNames.length
-    ? `\n         ??  also found spec file(s) under a different name (${driftNames.join(', ')}) — if the repo's detected name changed (e.g. package.json's "name" field), these are an orphaned earlier sequence, not lost, just not continued`
+    ? `         ??  also found spec file(s) under a different name (${driftNames.join(', ')}) — if the repo's detected name changed (e.g. package.json's "name" field), these are an orphaned earlier sequence, not lost, just not continued`
     : '';
+
+  // Gitignoring comes after any Detected scan below, so the scan doesn't
+  // report a .gitignore this same run is about to change.
+  const finish = (headline, extra = [], version = latest) => {
+    const lines = [`${header}\n${headline}`, ...setupLines, ...extra];
+    if (ensureGitignored(repo)) lines.push(`         OK  added ${AGENDAS}/ to .gitignore — agendas stay private unless you remove that line`);
+    const stray = version > 0 ? strayInAgendas(repo, name, version) : [];
+    if (stray.length) lines.push(`         ⚠️  ${AGENDAS}/ should hold only the current spec + handoff loose — also found: ${stray.join(', ')} (not moved; plans belong in planning/)`);
+    if (driftLine) lines.push(driftLine);
+    return lines.join('\n');
+  };
 
   if (!closeMode) {
     if (latest > 0) {
-      return `${header}\nSPEC     OK  ${name}_spec_v0_${pad2(latest)}.md already exists — nothing to do (${BT}driftcheck spec close${BT} checkpoints forward)${driftLine}`;
+      return finish(`SPEC     OK  ${name}_spec_v0_${pad2(latest)}.md already exists — nothing to do (${BT}driftcheck spec close${BT} checkpoints forward)`);
     }
     writeFileSync(specPath(repo, name, 1), buildInitialSpecBody(repo, name));
-    return `${header}\nSPEC     OK  created ${name}_spec_v0_01.md${driftLine}`;
+    return finish(`SPEC     OK  created ${AGENDAS}/${name}_spec_v0_01.md`, [], 1);
   }
 
   if (latest === 0) {
-    return `${header}\nSPEC     ??  no existing ${name}_spec_v0_NN.md found — run ${BT}driftcheck spec${BT} first${driftLine}`;
+    return finish(`SPEC     ??  no existing ${name}_spec_v0_NN.md found — run ${BT}driftcheck spec${BT} first`);
   }
   const next = latest + 1;
   const existing = readFileSync(specPath(repo, name, latest), 'utf8');
   const { content, notes } = patchSpecBody(existing, repo, name, next);
+  const plans = listPlans(repo, name);
+  archivePlans(repo, name, plans);
   writeFileSync(specPath(repo, name, next), content);
-  writeFileSync(handoffPath(repo, name, next), buildHandoffBody(name, next, latest));
+  writeFileSync(handoffPath(repo, name, next), buildHandoffBody(name, next, latest, plans));
 
   const archivedSpecs = archivePrevious(repo, name, 'spec', next);
   const archivedHandoffs = archivePrevious(repo, name, 'thread_handoff', next);
+  const archivedPlans = plans.filter((p) => p.archivedAs);
   const archiveParts = [];
-  if (archivedSpecs.length) archiveParts.push(`${archivedSpecs.length} spec(s) → ${name}_spec_previous/`);
-  if (archivedHandoffs.length) archiveParts.push(`${archivedHandoffs.length} handoff(s) → ${name}_thread_handoff_previous/`);
+  if (archivedSpecs.length) archiveParts.push(`${archivedSpecs.length} spec(s) → previous/${name}_spec_previous/`);
+  if (archivedHandoffs.length) archiveParts.push(`${archivedHandoffs.length} handoff(s) → previous/${name}_thread_handoff_previous/`);
+  if (archivedPlans.length) archiveParts.push(`${archivedPlans.length} plan(s) → previous/${name}_plan_previous/`);
   const archiveNote = archiveParts.length ? ` (archived ${archiveParts.join(', ')})` : '';
+
+  const extra = notes.map((note) => `         ??  ${note}`);
+  const unowned = plans.filter((p) => !p.owned).map((p) => p.file);
+  if (unowned.length) extra.push(`         ??  left in planning/ without the ${name}_ prefix: ${unowned.join(', ')} — rename to have them archived at close`);
 
   // A non-empty `notes` means a patch step above (the Detected scan, the
   // Checkpoint Log insert) actually failed to apply — the headline verdict
   // needs to say so, not read as a clean OK with the caveats buried below.
   const verdict = notes.length > 0 ? '⚠️ ' : 'OK ';
   const summary = notes.length > 0 ? 'checkpointed (partial)' : 'checkpointed';
-  const lines = [`${header}\nSPEC     ${verdict} ${summary} → ${name}_spec_v0_${pad2(next)}.md + ${name}_thread_handoff_v0_${pad2(next)}.md${archiveNote}`];
-  for (const note of notes) lines.push(`         ??  ${note}`);
-  if (driftLine) lines.push(driftLine.trimStart());
-  return lines.join('\n');
+  return finish(`SPEC     ${verdict} ${summary} → ${AGENDAS}/${name}_spec_v0_${pad2(next)}.md + ${name}_thread_handoff_v0_${pad2(next)}.md${archiveNote}`, extra, next);
 }
