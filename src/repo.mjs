@@ -143,6 +143,15 @@ export function runRepoCheck(args) {
           const wts = readdirSync(wtDir).filter(Boolean);
           if (wts.length) say(`         ⚠️  ${wts.length} agent worktree(s) in .claude/worktrees: ${wts.join(', ')} — make sure test/build globs exclude these before trusting counts elsewhere`);
         }
+
+        // Spec/handoff files git would publish: outside the (gitignored)
+        // agendas/ folder and not ignored some other way — e.g. a handoff
+        // copied up to the root to paste into a new thread. examples/ is
+        // exempt: sample checkpoints there are meant to be public.
+        const exposed = sh(repo, 'git ls-files --cached --others --exclude-standard').out.split('\n')
+          .map((f) => f.trim())
+          .filter((f) => /_(spec|thread_handoff)_v0_\d{2,}\.md$/.test(f) && !f.startsWith('agendas/') && !f.startsWith('examples/'));
+        if (exposed.length) say(`         ⚠️  checkpoint file(s) outside agendas/ and not gitignored: ${exposed.join(', ')} — these would be committed and published`);
       }
     }
   }
