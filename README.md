@@ -184,7 +184,7 @@ the spec's latest Checkpoint Log entry rather than repeating it, and
 carries only what a fresh session actually needs — what to do next, and
 any open questions left deliberately unresolved rather than
 re-litigated. This project uses `driftcheck spec` on itself, privately,
-in its own gitignored `agendas/`; [`examples/agendas/`](examples/agendas/)
+in its own gitignored `agendas/`; [`examples/agendas/`](https://github.com/billthegoatnotme/driftcheck/tree/main/examples/agendas)
 is a public, made-up sample of what a filled-in checkpoint looks like.
 
 `<repo>` in the generated filenames is the target's own name (from
